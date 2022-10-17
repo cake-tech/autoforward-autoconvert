@@ -153,7 +153,7 @@ Append the following job:
  
 `*/5 * * * * /usr/bin/python3 /root/autoconvert-kraken.py`
 
-`/usr/bin/python3` is the location of your Python installation. Replace it and the monero-forwarder paths as necessary. Save the file.
+`/usr/bin/python3` is the location of your Python installation. Replace it and the autoconvert-kraken paths as necessary. Save the file.
 
 Enable the cron service:
 

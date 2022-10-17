@@ -4,7 +4,7 @@ These steps will allow you to set up a simple Monero wallet program that will au
 
 ## High level process
 
-This is intended to run on Ubuntu/Linux.
+This is intended to run a fresh Ubuntu/Linux install.
 
 The high-level process is:
 
@@ -17,7 +17,7 @@ The high-level process is:
 
 ### Spare server; can be super low spec
 
-Basically any VPS will do. Do yourself a favor and use an SSD though. If you are using this for a critical production deployment, consider 2+ CPUs for faster scanning. This guide assumes it's a fresh Ubuntu install.
+Basically any VPS will do. Do yourself a favor and use an SSD though. If you are using this for a critical production deployment, consider 2+ CPUs for faster scanning.
 
 ### Installed python3
 
@@ -65,7 +65,7 @@ If you already have a Monero wallet file, then skip these steps and simply trans
 
 Run `monero-wallet-cli`
 
-Create a new wallet name that you'll remember, such as `forward`. Choose a STRONG password, though if this box is compromised, people can steal any funds that are in the wallet at that point and any point in the future.
+Create a new wallet name that you'll remember, such as `autoforward`. Choose a STRONG password, though if this box is compromised, people can steal any funds that are in the wallet at that point and any point in the future.
 
 Make sure the wallet files have the proper permissions: `chmod 700 /path/to/file`
 
@@ -101,9 +101,9 @@ Calculate the necessary operation for timings using [this website](https://cront
 0 0 * * */1`           every 1 day
 ```
 
-Save `monero-autoforward.py`, available in this repo. Make sure to change the address, password, and (if needed) index.
+Save `autoforward-monero.py`, available in this repo. Make sure to change the address, password, and (if needed) index.
 
-First, find where python is on your device.
+Find where python is on your device.
 
 `type -a python3`
 
@@ -113,7 +113,7 @@ Set up the cron function to run this python command.
 
 Append the following job:
  
-`*/5 * * * * /usr/bin/python3 /root/monero-forwarder.py`
+`*/5 * * * * /usr/bin/python3 /root/autoforward-monero.py`
 
 `/usr/bin/python3` is the location of your Python installation. Replace it and the monero-forwarder paths as necessary. Save the file.
 
@@ -127,7 +127,39 @@ You're done! The cron task will run every 5 minutes, or whatever other duration 
 
 This uses Kraken. If you want to write a python script for another exchange, then we're happy to add it here!
 
-TODO
+### Create Kraken API key
+
+[Click here](https://www.kraken.com/u/security/api/new), then create a new API key with the following parameters:
+
+* Choose your own description.
+* Leave the "Nonce window" as 0, unless you know why you want to change it.
+* Enable "Query funds".
+* Enable "Create and modify orders".
+* Recommended: enable IP whitelisting, and add your VPS IP address as the only valid address. If you do this, you'll need to make a new API key if you change servers, and you'll have better security.
+
+### Configure cron job
+
+Save `autoconvert-kraken-XXX-to-XXX.py` (selecting your convert from and convert to assets as desired), available in this repo. Make sure to add `API_KEY_KRAKEN` and `API_SEC_KRAKEN`. If your specific convert to and convert from assets aren't supported, use one as a template and modify, or open an issue to request it.
+
+Find where python is on your device.
+
+`type -a python3`
+
+Set up the cron function to run this python command.
+
+`crontab -e`
+
+Append the following job:
+ 
+`*/5 * * * * /usr/bin/python3 /root/autoconvert-kraken.py`
+
+`/usr/bin/python3` is the location of your Python installation. Replace it and the monero-forwarder paths as necessary. Save the file.
+
+Enable the cron service:
+
+`sudo systemctl enable cron.service`
+
+You're done! The cron task will run every 5 minutes, or whatever other duration you specified.
 
 # Credits
 

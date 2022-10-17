@@ -11,13 +11,13 @@ The high-level process is:
 1. Create/transfer a Monero wallet file
 2. Run Monero Wallet RPC on the server
 3. Set up a cron job to autoforward every X minutes
-4. Set up a cron job to autoconvert every X minutes
+4. Set up a cron job to autoconvert every X minutes (or use BTC Transmuter)
 
 ## Prerequisities
 
 ### Spare server; can be super low spec
 
-Basically any VPS will do. Do yourself a favor and use an SSD though. If you are using this for a critical production deployment, consider 2+ CPUs for faster scanning.
+Basically any VPS will do. Do yourself a favor and use an SSD though. If you are using this for a critical production deployment, consider 2+ CPU cores for faster scanning.
 
 ### Installed python3
 

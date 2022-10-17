@@ -17,7 +17,15 @@ The high-level process is:
 
 ### Spare server; can be super low spec
 
-Basically any VPS will do. Do yourself a favor and use an SSD though. If you are using this for a critical production deployment, consider 2+ CPUs for faster scanning.
+Basically any VPS will do. Do yourself a favor and use an SSD though. If you are using this for a critical production deployment, consider 2+ CPUs for faster scanning. This guide assumes it's a fresh Ubuntu install.
+
+### Installed python3
+
+This could possibly work with other versions, but install the latest version of python.
+
+`sudo apt update`
+
+`sudo apt install python3`
 
 ### Installed latest [Monero CLI tools](https://getmonero.org/downloads/#cli)
 
@@ -55,11 +63,11 @@ You can optionally use an exchange that supports auto-convert functionality, for
 
 If you already have a Monero wallet file, then skip these steps and simply transfer your wallet file over to the server instead.
 
-`monero-wallet-cli`
+Run `monero-wallet-cli`
 
-Create a new wallet name that you'll remember, such as `forwarder`. Choose a STRONG password, though if this box is compromised, people can steal any funds that are in the wallet at that point and any point in the future.
+Create a new wallet name that you'll remember, such as `forward`. Choose a STRONG password, though if this box is compromised, people can steal any funds that are in the wallet at that point and any point in the future.
 
-Make sure the wallet file is chmod 700
+Make sure the wallet files have the proper permissions: `chmod 700 /path/to/file`
 
 ## Run Monero Wallet RPC on the server
 
@@ -79,6 +87,8 @@ Confirm monero-wallet-rpc is started correctly by checking the logs: `docker log
 
 NOTE: I had issues using Seth's docker image. It was unable to find the wallet file. I was able to run `monero-wallet-rpc` with this command to work: `./monero-wallet-rpc --rpc-bind-port=18081 --daemon-address=xmr-node.cakewallet.com:18081 --wallet-file=<FILE> --password=<PASSWORD> --rpc-login=monero:<RPCPASSWORD> --detach`
 
+If you go this direct monero-wallet-rpc route without Docker, you'll need to make a [system script](https://sethforprivacy.com/guides/run-a-monero-node-advanced/#install-monerod-systemd-script) to run this as a service.
+
 ## Set up a cron job to autoforward every X minutes
 
 First, decide how often you want the command to run. If you want to only forward occasionally, then setting it to every 60 minutes or even 24 hours may be fine. If you want the fastest performance, setting up forwarding every minute is reasonable.
@@ -91,27 +101,33 @@ Calculate the necessary operation for timings using [this website](https://cront
 0 0 * * */1`           every 1 day
 ```
 
-Save `monero-autoforward.py`. Make sure to change the address, password, and (if needed) index.
+Save `monero-autoforward.py`, available in this repo. Make sure to change the address, password, and (if needed) index.
 
-Set up the cron function to run this command.
+First, find where python is on your device.
+
+`type -a python3`
+
+Set up the cron function to run this python command.
 
 `crontab -e`
 
- Append the following job:
+Append the following job:
  
- `*/5 * * * * /usr/bin/python3 /home/$USER/monero-forwarder.py`
- 
- Save the file.
- 
- `sudo systemctl enable cron.service`
- 
- You're done! The cron task will run every 5 minutes, or whatever other duration you specified.
- 
- ## Set up a cron job to autoconvert every X minutes
- 
- This uses Kraken. If you want to write a python script for another exchange, then we're happy to add it here!
- 
- TODO
+`*/5 * * * * /usr/bin/python3 /root/monero-forwarder.py`
+
+`/usr/bin/python3` is the location of your Python installation. Replace it and the monero-forwarder paths as necessary. Save the file.
+
+Enable the cron service:
+
+`sudo systemctl enable cron.service`
+
+You're done! The cron task will run every 5 minutes, or whatever other duration you specified.
+
+## Set up a cron job to autoconvert every X minutes
+
+This uses Kraken. If you want to write a python script for another exchange, then we're happy to add it here!
+
+TODO
 
 # Credits
 

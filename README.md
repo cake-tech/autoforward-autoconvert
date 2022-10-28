@@ -85,9 +85,15 @@ docker run -d \
 
 Confirm monero-wallet-rpc is started correctly by checking the logs: `docker logs --follow monero-wallet-rpc`
 
+### Setting up a service instead
+
+If you have issues using Docker, I recommend manually configuring a service.
+
 NOTE: I had issues using Seth's docker image. It was unable to find the wallet file. I was able to run `monero-wallet-rpc` with this command to work: `./monero-wallet-rpc --rpc-bind-port=18081 --daemon-address=xmr-node.cakewallet.com:18081 --wallet-file=<FILE> --password=<PASSWORD> --rpc-login=monero:<RPCPASSWORD> --detach`
 
 If you go this direct monero-wallet-rpc route without Docker, you'll need to make a [system script](https://sethforprivacy.com/guides/run-a-monero-node-advanced/#install-monerod-systemd-script) to run this as a service.
+
+I was unable to get the wallet to open if the wallet password was provided in a .conf file, so I needed to save the wallet password to the .service file. If you are getting errors about another user having access to the Monero .keys file, then change ownership of the file to the user and group you are running the command from.
 
 ## Set up a cron job to autoforward every X minutes
 

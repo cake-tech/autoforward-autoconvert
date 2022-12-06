@@ -87,13 +87,23 @@ Confirm monero-wallet-rpc is started correctly by checking the logs: `docker log
 
 ### Setting up a service instead
 
-If you have issues using Docker, I recommend manually configuring a service.
+If you have issues using Docker (eg: unable to find the wallet file), I recommend manually configuring a service.
 
-NOTE: I had issues using Seth's docker image. It was unable to find the wallet file. I was able to run `monero-wallet-rpc` with this command to work: `./monero-wallet-rpc --rpc-bind-port=18081 --daemon-address=xmr-node.cakewallet.com:18081 --wallet-file=<FILE> --password=<PASSWORD> --rpc-login=monero:<RPCPASSWORD> --detach`
+Edit the service script file: `nano /etc/systemd/system/autoforward.service`
 
-If you go this direct monero-wallet-rpc route without Docker, you'll need to make a [system script](https://sethforprivacy.com/guides/run-a-monero-node-advanced/#install-monerod-systemd-script) to run this as a service.
+Paste the following: `/parth/to/monero-wallet-rpc --rpc-bind-port=18081 --daemon-address=xmr-node.cakewallet.com:18081 --wallet-file=<FILE> --password=<PASSWORD> --rpc-login=monero:<RPCPASSWORD> --detach`
+
+Make sure to change the rpc file path, wallet file path, wallet password, and RPC password.
 
 I was unable to get the wallet to open if the wallet password was provided in a .conf file, so I needed to save the wallet password to the .service file. If you are getting errors about another user having access to the Monero .keys file, then change ownership of the file to the user and group you are running the command from.
+
+Restart systemctl:
+
+`sudo systemctl daemon-reload`
+
+`sudo systemctl enable autoforward`
+
+`sudo systemctl start autoforward`
 
 ## Set up a cron job to autoforward every X minutes
 

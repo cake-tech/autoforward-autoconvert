@@ -123,7 +123,7 @@ After=network.target
 
 Type=forking
 PIDFile=/var/run/monero/monerod.pid
-ExecStart=/var/lib/monero/monero-wallet-rpc --rpc-bind-port=18081 --daemon-address=xmr-node.cakewallet.com:18081 --wallet-file=/var/lib/autoforward.keys --password=<PASSWORD> --rpc-login=monero:<RPCPASSWORD> --detach
+ExecStart=/var/lib/monero/monero-wallet-rpc --rpc-bind-port=18081 --daemon-address=xmr-node.cakewallet.com:18081 --wallet-file=/var/lib/monero/autoforward.keys --password=<PASSWORD> --rpc-login=monero:<RPCPASSWORD> --detach
 Restart=on-failure
 RestartSec=30
 

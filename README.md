@@ -89,9 +89,87 @@ Confirm monero-wallet-rpc is started correctly by checking the logs: `docker log
 
 If you have issues using Docker (eg: unable to find the wallet file), I recommend manually configuring a service.
 
+#### Initial setup (thanks SethForPrivacy)
+
+```
+# Create a system user and group to run monerod
+sudo addgroup --system monero
+sudo adduser --system --home /var/lib/monero --ingroup monero --disabled-login monero
+
+# Create necessary directories for monerod
+sudo mkdir /var/run/monero
+sudo mkdir /var/log/monero
+sudo mkdir /etc/monero
+
+# Set permissions for new directories
+sudo chown monero:monero /var/run/monero
+sudo chown monero:monero /var/log/monero
+sudo chown -R monero:monero /etc/monero
+```
+
+
 Edit the service script file: `nano /etc/systemd/system/autoforward.service`
 
-Paste the following: `/path/to/monero-wallet-rpc --rpc-bind-port=18081 --daemon-address=xmr-node.cakewallet.com:18081 --wallet-file=<FILE>.keys --password=<PASSWORD> --rpc-login=monero:<RPCPASSWORD> --detach`
+Paste the following:
+
+```
+[Unit]
+Description=Autoforwards with monero-wallet-rpc
+After=network.target
+
+[Service]
+# Process management
+####################
+
+Type=forking
+PIDFile=/var/run/monero/monerod.pid
+ExecStart=/var/lib/monero/monero-wallet-rpc --rpc-bind-port=18081 --daemon-address=xmr-node.cakewallet.com:18081 --wallet-file=/var/lib/autoforward.keys --password=<PASSWORD> --rpc-login=monero:<RPCPASSWORD> --detach
+Restart=on-failure
+RestartSec=30
+
+# Directory creation and permissions
+####################################
+
+# Run as monero:monero
+User=monero
+Group=monero
+
+# /run/monero
+RuntimeDirectory=monero
+RuntimeDirectoryMode=0710
+
+# /var/lib/monero
+StateDirectory=monero
+StateDirectoryMode=0710
+
+# /var/log/monero
+LogsDirectory=monero
+LogsDirectoryMode=0710
+
+# /etc/monero
+ConfigurationDirectory=monero
+ConfigurationDirectoryMode=0710
+
+# Hardening measures
+####################
+
+# Provide a private /tmp and /var/tmp.
+PrivateTmp=true
+
+# Mount /usr, /boot/ and /etc read-only for the process.
+ProtectSystem=full
+
+# Deny access to /home, /root and /run/user
+ProtectHome=true
+
+# Disallow the process and all of its children to gain
+# new privileges through execve().
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target
+
+```
 
 Make sure to change the rpc file path, wallet .keys file path, wallet password, and RPC password.
 
@@ -129,7 +207,7 @@ Set up the cron function to run this python command.
 
 Append the following job:
  
-`*/5 * * * * /usr/bin/python3 /root/autoforward-monero.py`
+`*/5 * * * * /usr/bin/python3 /var/lib/autoforward-monero.py`
 
 `/usr/bin/python3` is the location of your Python installation. Replace it and the monero-forwarder paths as necessary. Save the file.
 

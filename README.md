@@ -175,6 +175,8 @@ Make sure to change the rpc file path, wallet .keys file path, wallet password, 
 
 I was unable to get the wallet to open if the wallet password was provided in a .conf file, so I needed to save the wallet password to the .service file. If you are getting errors about another user having access to the Monero .keys file, then change ownership of the file to the user and group you are running the command from.
 
+Double-check to ensure that the autoforward files are owned by the `monero` user.
+
 Restart systemctl:
 
 `sudo systemctl daemon-reload`
@@ -229,7 +231,7 @@ This uses Kraken. If you want to write a python script for another exchange, the
 * Leave the "Nonce window" as 0, unless you know why you want to change it.
 * Enable "Query funds".
 * Enable "Create and modify orders".
-* Recommended: enable IP whitelisting, and add your VPS IP address as the only valid address. If you do this, you'll need to make a new API key if you change servers, and you'll have better security.
+* Recommended: enable IP whitelisting, and add your VPS IP address as the only valid address. IPs can be changed latter without revoking the key.
 
 ### Configure cron job
 
@@ -254,6 +256,8 @@ Enable the cron service:
 `sudo systemctl enable cron.service`
 
 You're done! The cron task will run every 5 minutes, or whatever other duration you specified.
+
+Trading will not occur if the balance (and thus the trade size) is below the [minimum order size](https://support.kraken.com/hc/en-us/articles/205893708-What-is-the-minimum-order-size-). As of 2022-12-07, this is 0.02 XMR and 0.0001 BTC.
 
 # Credits
 

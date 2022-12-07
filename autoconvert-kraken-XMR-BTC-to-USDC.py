@@ -55,3 +55,33 @@ else:
         "volume": amount_to_sell_xmr,
         "pair": "XMRUSD"
     }, api_key, api_sec)
+
+
+try:
+    amount_to_sell_btc = data['result']['XBT']
+except KeyError:
+    print('There is no BTC balance')
+else:
+    amount_to_sell_btc = data['result']['XBT']
+    resp = kraken_request('/0/private/AddOrder', {
+        "nonce": str(int(1000*time.time())),
+        "ordertype": "market",
+        "type": "sell",
+        "volume": amount_to_sell_btc,
+        "pair": "XBTUSD"
+    }, api_key, api_sec)
+
+
+try:
+    amount_to_sell_usd = data['result']['ZUSD']
+except KeyError:
+    print('There is no USD balance')
+else:
+    amount_to_sell_usd = data['result']['ZUSD']
+    resp = kraken_request('/0/private/AddOrder', {
+        "nonce": str(int(1000*time.time())),
+        "ordertype": "market",
+        "type": "buy",
+        "volume": amount_to_sell_usd,
+        "pair": "USDCUSD"
+    }, api_key, api_sec)

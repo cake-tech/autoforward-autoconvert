@@ -68,7 +68,7 @@ else:
         "ordertype": "market",
         "type": "sell",
         "volume": amount_to_sell_btc,
-        "pair": "XBTUSD"
+        "pair": "XBTUSDC"
     }, api_key, api_sec)
 
 

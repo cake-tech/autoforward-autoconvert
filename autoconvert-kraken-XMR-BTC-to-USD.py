@@ -58,11 +58,11 @@ else:
 
 
 try:
-    amount_to_sell_btc = data['result']['XBT']
+    amount_to_sell_btc = data['result']['XXBT']
 except KeyError:
     print('There is no BTC balance')
 else:
-    amount_to_sell_btc = data['result']['XBT']
+    amount_to_sell_btc = data['result']['XXBT']
     resp = kraken_request('/0/private/AddOrder', {
         "nonce": str(int(1000*time.time())),
         "ordertype": "market",

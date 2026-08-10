@@ -5,13 +5,13 @@ import util
 import env
 from constants import MONERO_WALLET_FILENAME
 
-def get_xprv_from_mnemonic(coin: Literal['btc', 'ltc',], mnemonic: str ) -> str:
+def get_xprv_from_mnemonic(coin: Literal['btc', 'ltc',], mnemonic: str, passphrase: str = '') -> str:
    if env.TESTNET == '1':
       coin_type = Bip84Coins.BITCOIN_TESTNET if coin == 'btc' else Bip84Coins.LITECOIN_TESTNET
    else:
       coin_type = Bip84Coins.BITCOIN if coin == 'btc' else Bip84Coins.LITECOIN
 
-   seed_bytes = Bip39SeedGenerator(mnemonic).Generate()
+   seed_bytes = Bip39SeedGenerator(mnemonic).Generate(passphrase)
    bip84_master_key = Bip84.FromSeed(seed_bytes, coin_type)
    zprv = bip84_master_key.Purpose().Coin().Account(0).PrivateKey().ToExtended()
    return zprv
@@ -24,9 +24,12 @@ def restore_electrum_wallet(coin: Literal['btc', 'ltc', 'ltc-mweb'], key: str):
 def import_bitcoin_seed():
    # Only support electrum format for testnet
    if env.TESTNET == '1':
+      if env.BITCOIN_WALLET_PASSPHRASE:
+         print('WARNING: BITCOIN_WALLET_PASSPHRASE is ignored on testnet, where the seed is imported as-is.')
+
       key = env.BITCOIN_WALLET_SEED
    else:
-      key = get_xprv_from_mnemonic('btc', env.BITCOIN_WALLET_SEED)
+      key = get_xprv_from_mnemonic('btc', env.BITCOIN_WALLET_SEED, env.BITCOIN_WALLET_PASSPHRASE)
 
    restore_electrum_wallet('btc', key)
 

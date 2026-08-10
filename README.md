@@ -22,6 +22,7 @@ Every asset is optional. See [Choosing which assets to run](#choosing-which-asse
 | - | - | - | - |
 | `COMPOSE_PROFILES` | Yes | - | Comma-separated list of the assets to run: any of `btc`, `ltc`, `ltc-mweb`, `xmr`. |
 | `BITCOIN_WALLET_SEED` | `btc` | - | Your BIP39 Bitcoin mnemonic seed. |
+| `BITCOIN_WALLET_PASSPHRASE` | **No** | - | An optional BIP39 passphrase for the Bitcoin wallet. See [the note below](#bip39-passphrase-for-the-bitcoin-wallet). |
 | `LITECOIN_WALLET_SEED` | `ltc` | - | Your BIP39 Litecoin mnemonic seed. |
 | `LITECOIN_MWEB_WALLET_SEED` | `ltc-mweb` | - | Your Electrum-format Litecoin MWEB mnemonic seed. |
 | `MONERO_WALLET_SEED` | `xmr` | - | Your 25 word Monero mnemonic seed. |
@@ -45,6 +46,10 @@ Every asset is optional. See [Choosing which assets to run](#choosing-which-asse
 | `BTCPAY_STORE_ID` | **No** | - | The ID of the BTCPay store whose wallet these forwards are **sent from**. |
 | `BTCPAY_API_KEY` | **No** | - | A Greenfield API key with the `btcpay.store.canmanagewallettransactions` permission. |
 
+
+### BIP39 passphrase for the Bitcoin wallet
+
+Adding it to a running deployment does nothing on its own.** The seed importer skips wallets that already exist, so the old wallet keeps being used and no error is raised. To apply a passphrase to an existing setup you have to sweep out the funds first, then follow [Changing seeds](#changing-seeds) to wipe the volumes and re-import.
 
 ### Labeling forwarded transactions in BTCPay
 

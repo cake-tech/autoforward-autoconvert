@@ -133,6 +133,9 @@ services:
       - BITCOIN_FEE_RATE=${BITCOIN_FEE_RATE}
       - LITECOIN_FEE_SOURCE=${LITECOIN_FEE_SOURCE}
       - LITECOIN_FEE_RATE=${LITECOIN_FEE_RATE}
+      - BTCPAY_URL=${BTCPAY_URL}
+      - BTCPAY_STORE_ID=${BTCPAY_STORE_ID}
+      - BTCPAY_API_KEY=${BTCPAY_API_KEY}
     command: python ./src/autoforward.py
     extra_hosts:
       - "host.docker.internal:host-gateway"

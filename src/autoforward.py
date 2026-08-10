@@ -5,7 +5,7 @@ import traceback
 import requests
 import json
 
-from constants import FEE_API_TIMEOUT, MIN_BITCOIN_SEND_AMOUNT_MAINNET, MIN_BITCOIN_SEND_AMOUNT_TESTNET, MIN_LITECOIN_SEND_AMOUNT_MAINNET, MIN_LITECOIN_SEND_AMOUNT_TESTNET, MIN_MONERO_SEND_AMOUNT_MAINNET, MIN_MONERO_SEND_AMOUNT_TESTNET
+from constants import BTCPAY_DESTINATION_LABEL, BTCPAY_LABEL, FEE_API_TIMEOUT, MIN_BITCOIN_SEND_AMOUNT_MAINNET, MIN_BITCOIN_SEND_AMOUNT_TESTNET, MIN_LITECOIN_SEND_AMOUNT_MAINNET, MIN_LITECOIN_SEND_AMOUNT_TESTNET, MIN_MONERO_SEND_AMOUNT_MAINNET, MIN_MONERO_SEND_AMOUNT_TESTNET
 import util
 import env
 
@@ -101,8 +101,43 @@ def find_and_remove_offending_transactions(coin: ElectrumCoin):
             print(util.get_time(), f'Removing local transaction {tx['txid']} from history...')
             util.request_electrum_rpc(coin, 'removelocaltx', [tx['txid']])
 
-def broadcast_electrum_tx(coin: ElectrumCoin, signed_tx: str):
-    util.request_electrum_rpc(coin, 'broadcast', [signed_tx])
+def broadcast_electrum_tx(coin: ElectrumCoin, signed_tx: str) -> str:
+    return cast(str, util.request_electrum_rpc(coin, 'broadcast', [signed_tx]))
+
+def label_btcpay_tx(coin: ElectrumCoin, txid: str, labels: List[str]) -> None:
+    # Tag a forwarded transaction in BTCPay so it can be told apart from a manual spend.
+    # Best effort: any failure is logged and never interrupts forwarding.
+
+    if not env.BTCPAY_LABELING_ENABLED:
+        return
+
+    # Only Bitcoin and Litecoin (non MWEB) are supported
+    coin_to_payment_method: dict[ElectrumCoin, str] = {
+        'btc': 'BTC-OnChain',
+        'ltc': 'LTC-OnChain'
+    }
+
+    payment_method = coin_to_payment_method.get(coin)
+
+    if not payment_method:
+        return
+
+    wallet_path = f'/api/v1/stores/{env.BTCPAY_STORE_ID}/payment-methods/{payment_method}/wallet'
+
+    try:
+        for label_id in labels:
+            util.post_btcpay_greenfield(f'{wallet_path}/objects', {'type': 'label', 'id': label_id})
+
+        # This overwrites the node's data rather than merging into it, so it would replace
+        # a comment or label added before forwarding
+        util.post_btcpay_greenfield(f'{wallet_path}/objects', {'type': 'tx', 'id': txid})
+
+        for label_id in labels:
+            util.post_btcpay_greenfield(f'{wallet_path}/objects/tx/{txid}/links', {'type': 'label', 'id': label_id})
+
+        print(util.get_time(), f'Labeled {coin.upper()} transaction {txid} in BTCPay: {", ".join(labels)}')
+    except Exception as e:
+        print(util.get_time(), f'Failed to label {coin.upper()} transaction {txid} in BTCPay: {e}')
 
 def get_monero_balance() -> float:
     params = {'account_index': 0}
@@ -205,7 +240,7 @@ def attempt_electrum_autoforward(coin: ElectrumCoin):
         signed_tx = create_psbt(coin, address, unsigned=False)
 
     try:
-        broadcast_electrum_tx(coin, signed_tx)
+        txid = broadcast_electrum_tx(coin, signed_tx)
     except Exception as e:
         error_msg = e.__str__()
 
@@ -213,11 +248,15 @@ def attempt_electrum_autoforward(coin: ElectrumCoin):
         if ('bad-txns-inputs-missingorspent' in error_msg):
             print(util.get_time(), f'Got bad-txns-inputs-missingorspent error while broadcasting transaction. Looking for the offending transaction in history...')
             find_and_remove_offending_transactions(coin)
-            broadcast_electrum_tx(coin, signed_tx)
+            txid = broadcast_electrum_tx(coin, signed_tx)
         else:
             raise e
 
     print(util.get_time(), f'Autoforwarded {balance} {coin_upper} to {address}!')
+
+    # On testnet the forward goes back to one of our own addresses, not to Kraken
+    labels = [BTCPAY_LABEL] if env.TESTNET == '1' else [BTCPAY_LABEL, BTCPAY_DESTINATION_LABEL]
+    label_btcpay_tx(coin, txid, labels)
 
 def attempt_monero_autoforward():
     balance = get_monero_balance()

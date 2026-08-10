@@ -11,7 +11,7 @@ import hmac
 import json
 import time
 import env
-from constants import ELECTRUM_RPC_TIMEOUT, KRAKEN_API_TIMEOUT, MONERO_RPC_TIMEOUT, MONERO_WALLET_FILENAME, STALLED_WAIT_ATTEMPTS
+from constants import BTCPAY_API_TIMEOUT, ELECTRUM_RPC_TIMEOUT, KRAKEN_API_TIMEOUT, MONERO_RPC_TIMEOUT, MONERO_WALLET_FILENAME, STALLED_WAIT_ATTEMPTS
 
 def get_time() -> str:
     return f'[{datetime.now().strftime("%Y-%m-%d %H:%M:%S")}]'
@@ -192,5 +192,17 @@ def kraken_request(path: str, payload = {}) -> dict:
         print(f'request to kraken at {path} failed:')
         print(response_json)
         raise Exception(response_json)
-    
+
     return response_json['result']
+
+def post_btcpay_greenfield(path: str, payload: dict) -> None:
+    headers = {'Authorization': f'token {env.BTCPAY_API_KEY}'}
+
+    response = requests.post(
+        env.BTCPAY_URL.rstrip('/') + path,
+        headers=headers,
+        json=payload,
+        timeout=BTCPAY_API_TIMEOUT
+    )
+
+    response.raise_for_status()

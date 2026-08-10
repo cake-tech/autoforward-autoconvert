@@ -41,7 +41,18 @@ Every asset is optional. See [Choosing which assets to run](#choosing-which-asse
 | `BITCOIN_FEE_RATE` | **No** | `halfHourFee` | The fee rate to use in the Bitcoin fee source API response. |
 | `LITECOIN_FEE_SOURCE` | **No** | `https://litecoinspace.org/api/v1/fees/recommended` | The fee API source to use for Litecoin transactions. |
 | `LITECOIN_FEE_RATE` | **No** | `halfHourFee` | The fee rate to use in the Litecoin fee source API response. |
+| `BTCPAY_URL` | **No** | - | Base URL of your BTCPay Server, e.g. `https://btcpay.example.com`. Set all three `BTCPAY_*` variables to enable transaction labeling. |
+| `BTCPAY_STORE_ID` | **No** | - | The ID of the BTCPay store whose wallet these forwards are **sent from**. |
+| `BTCPAY_API_KEY` | **No** | - | A Greenfield API key with the `btcpay.store.canmanagewallettransactions` permission. |
 
+
+### Labeling forwarded transactions in BTCPay
+
+This is supported for Bitcoin and Litecoin (not MWEB) only.
+
+After performing an autoforward transaction and if configured, it will attempt to ***replace*** any metadata for the outgoing transaction with two labels: `autoforward` and `kraken`. Configurable with `BTCPAY_LABEL` and `BTCPAY_DESTINATION_LABEL`.
+
+To set it up, create an API key under Account -> API Keys with the **"Manage wallet transactions"** permission (`btcpay.store.canmanagewallettransactions`) for that store. This permission covers labeling only. Spending through the Greenfield API is gated separately on `btcpay.store.cancreatetransactions` and `btcpay.store.cansigntransactions`. Requires BTCPay Server 2.4.0 or newer.
 
 ### Choosing which assets to run
 

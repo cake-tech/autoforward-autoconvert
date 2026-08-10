@@ -5,7 +5,7 @@ import traceback
 import requests
 import json
 
-from constants import MIN_BITCOIN_SEND_AMOUNT_MAINNET, MIN_BITCOIN_SEND_AMOUNT_TESTNET, MIN_LITECOIN_SEND_AMOUNT_MAINNET, MIN_LITECOIN_SEND_AMOUNT_TESTNET, MIN_MONERO_SEND_AMOUNT_MAINNET, MIN_MONERO_SEND_AMOUNT_TESTNET
+from constants import FEE_API_TIMEOUT, MIN_BITCOIN_SEND_AMOUNT_MAINNET, MIN_BITCOIN_SEND_AMOUNT_TESTNET, MIN_LITECOIN_SEND_AMOUNT_MAINNET, MIN_LITECOIN_SEND_AMOUNT_TESTNET, MIN_MONERO_SEND_AMOUNT_MAINNET, MIN_MONERO_SEND_AMOUNT_TESTNET
 import util
 import env
 
@@ -27,7 +27,7 @@ def get_fee_rate(coin: ElectrumCoin) -> int:
     source = coin_to_source[coin]
     rate = coin_to_rate[coin]
 
-    return requests.get(source).json()[rate]
+    return requests.get(source, timeout=FEE_API_TIMEOUT).json()[rate]
 
 def set_electrum_fee_rate(coin: ElectrumCoin, rate: int = None, dynamic: bool = None):
     if dynamic:  # Fall back to the Electrum rate if there is an issue
@@ -236,33 +236,25 @@ def attempt_monero_autoforward():
     sweep_all_monero(address)
     print(util.get_time(), f'Autoforwarded {balance} XMR to {address}!')
 
+print(util.get_time(), f'Autoforwarding: {", ".join(env.ENABLED_ASSETS)}')
+
 util.wait_for_rpc()
 util.wait_for_wallets()
 
-while 1: 
-    try:
-        attempt_electrum_autoforward('btc')
-    except Exception as e:
-        print(util.get_time(), 'Error autoforwarding Bitcoin:')
-        print(traceback.format_exc())
+while 1:
+    for coin in env.ENABLED_ELECTRUM_COINS:
+        try:
+            attempt_electrum_autoforward(cast(ElectrumCoin, coin))
+        except Exception as e:
+            print(util.get_time(), f'Error autoforwarding {coin.upper()}:')
+            print(traceback.format_exc())
 
-    try:
-        attempt_electrum_autoforward('ltc')
-    except Exception as e:
-        print(util.get_time(), 'Error autoforwarding litecoin:')
-        print(traceback.format_exc())
-    
-    try:
-        attempt_electrum_autoforward('ltc-mweb')
-    except Exception as e:
-        print(util.get_time(), 'Error autoforwarding Litecoin MWEB:')
-        print(traceback.format_exc())
-
-    try:
-        attempt_monero_autoforward()
-    except Exception as e:
-        print(util.get_time(), 'Error autoforwarding Monero:')
-        print(traceback.format_exc())
+    if env.MONERO_ENABLED:
+        try:
+            attempt_monero_autoforward()
+        except Exception as e:
+            print(util.get_time(), 'Error autoforwarding Monero:')
+            print(traceback.format_exc())
 
     delay = random.randint(270, 330)
     sleep(delay)

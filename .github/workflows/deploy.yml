@@ -6,25 +6,40 @@ on:
       - main
   workflow_dispatch:
 
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+permissions: {}
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
     environment: production
 
     steps:
-      - uses: actions/checkout@v4
       - uses: webfactory/ssh-agent@v0.9.0
         with:
           ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+      - name: Pin VPS host key
+        run: |
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          echo "${{ secrets.VPS_SSH_HOST_KEY }}" > ~/.ssh/known_hosts
       - name: Deploy
         run: |
-          ssh -o StrictHostKeyChecking=no ${{ secrets.VPS_USER }}@${{ secrets.VPS_IP }} << 'EOF'
+          ssh -o StrictHostKeyChecking=yes -o BatchMode=yes ${{ secrets.VPS_USER }}@${{ secrets.VPS_IP }} << 'EOF'
+            set -eu
             export HISTFILE=/dev/null
             cd autoforward-autoconvert
-            git checkout main
-            echo "Pulling changes..."
-            git pull
-            echo "Starting..."
+            echo "Deploying ${{ github.sha }}..."
+            git fetch --quiet origin
+            # Deploy the commit this run was approved for, not whatever main points at now
+            git checkout --quiet --detach ${{ github.sha }}
+
+            # Default to every asset if none are provided
+            export COMPOSE_PROFILES="${{ secrets.COMPOSE_PROFILES }}"
+            : "${COMPOSE_PROFILES:=btc,ltc,ltc-mweb,xmr}"
+            echo "Starting with COMPOSE_PROFILES=$COMPOSE_PROFILES..."
 
             ELECTRUM_RPC_PASSWORD="${{ secrets.ELECTRUM_RPC_PASSWORD }}" \
             BITCOIN_ELECTRUM_SERVER_ADDRESS="${{ secrets.BITCOIN_ELECTRUM_SERVER_ADDRESS }}" \

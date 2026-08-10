@@ -3,6 +3,7 @@ from typing import Literal, cast
 from requests.auth import HTTPDigestAuth
 from datetime import datetime
 import urllib.parse
+import threading
 import requests
 import hashlib
 import base64
@@ -10,7 +11,7 @@ import hmac
 import json
 import time
 import env
-from constants import MONERO_WALLET_FILENAME
+from constants import ELECTRUM_RPC_TIMEOUT, KRAKEN_API_TIMEOUT, MONERO_RPC_TIMEOUT, MONERO_WALLET_FILENAME, STALLED_WAIT_ATTEMPTS
 
 def get_time() -> str:
     return f'[{datetime.now().strftime("%Y-%m-%d %H:%M:%S")}]'
@@ -38,10 +39,11 @@ def request_electrum_rpc(coin: Literal['btc', 'ltc', 'ltc-mweb'], method: str, p
     }
 
     response =  requests.post(
-         coin_to_url[coin], 
+         coin_to_url[coin],
         headers=headers,
         data=json.dumps(data),
-        auth=coin_to_auth[coin]
+        auth=coin_to_auth[coin],
+        timeout=ELECTRUM_RPC_TIMEOUT
     )
 
     response_json = response.json()
@@ -67,7 +69,8 @@ def request_monero_rpc(method: str, params: dict = {}):
         env.MONERO_RPC_URL,
         headers=headers,
         json=data,
-        auth=HTTPDigestAuth(env.MONERO_RPC_USERNAME, env.MONERO_RPC_PASSWORD)
+        auth=HTTPDigestAuth(env.MONERO_RPC_USERNAME, env.MONERO_RPC_PASSWORD),
+        timeout=MONERO_RPC_TIMEOUT
     )
 
     response_json = response.json()
@@ -79,48 +82,33 @@ def request_monero_rpc(method: str, params: dict = {}):
 
     return response_json['result']
 
-def open_bitcoin_wallet():
-    request_electrum_rpc('btc', 'load_wallet')
-
-def open_litecoin_wallet():
-    request_electrum_rpc('ltc', 'load_wallet')
-
-def open_litecoin_mweb_wallet():
-    request_electrum_rpc('ltc-mweb', 'load_wallet')
-
 def open_monero_wallet() -> None:
     params = {'filename': MONERO_WALLET_FILENAME, 'password': env.MONERO_WALLET_PASSWORD}
     request_monero_rpc('open_wallet', params)
 
+def warn_if_container_missing(asset: str, attempts: int):
+    if attempts == STALLED_WAIT_ATTEMPTS:
+        print(f'Still waiting for {asset} after {STALLED_WAIT_ATTEMPTS * 10}s. Is "{asset}" missing from COMPOSE_PROFILES?')
+
 def wait_for_rpc():
-    print('Waiting for Bitcoin Electrum RPC...')
+    for coin in env.ENABLED_ELECTRUM_COINS:
+        print(f'Waiting for {coin} Electrum RPC...')
+        attempts = 0
 
-    while 1:
-        try:
-            request_electrum_rpc('btc', 'getinfo')
-            break
-        except:
-            time.sleep(10)
-    
-    print('Waiting for Litecoin Electrum RPC...')
+        while 1:
+            try:
+                request_electrum_rpc(coin, 'getinfo')
+                break
+            except:
+                attempts += 1
+                warn_if_container_missing(coin, attempts)
+                time.sleep(10)
 
-    while 1:
-        try:
-            request_electrum_rpc('ltc', 'getinfo')
-            break
-        except:
-            
-            time.sleep(10)
+    if not env.MONERO_ENABLED:
+        return
 
-    while 1:
-        try:
-            request_electrum_rpc('ltc-mweb', 'getinfo')
-            break
-        except:
-            
-            time.sleep(10)
-    
     print('Waiting for Monero RPC...')
+    attempts = 0
 
     while 1:
         try:
@@ -129,46 +117,34 @@ def wait_for_rpc():
         except Exception as e:
             if 'No wallet file' in e.__str__():
                 break
+            attempts += 1
+            warn_if_container_missing('xmr', attempts)
             time.sleep(10)
 
 def wait_for_wallets():
-    print('Waiting for Bitcoin wallet...')
+    for coin in env.ENABLED_ELECTRUM_COINS:
+        print(f'Waiting for {coin} wallet...')
 
-    while 1:
-        try:
-            open_bitcoin_wallet()
-            break
-        except:
-            time.sleep(10)
-        
-    print('Waiting for Litecoin wallet...')
+        while 1:
+            try:
+                request_electrum_rpc(coin, 'load_wallet')
+                break
+            except:
+                time.sleep(10)
 
-    while 1:
-        try:
-            open_litecoin_wallet()
-            break
-        except:
-            time.sleep(10)
-    
-    print('Waiting for Litecoin MWEB wallet...')
-
-    while 1:
-        try:
-            open_litecoin_mweb_wallet()
-            break
-        except:
-            time.sleep(10)
+    if not env.MONERO_ENABLED:
+        return
 
     print('Waiting for Monero wallet...')
 
-    while 1:                  
+    while 1:
         try:
             request_monero_rpc('get_balance', {'account_index': 0})
             break
         except Exception as e:
             print('Failed to check Monero balance:', e)
             print('Attempting to open Monero wallet...')
-        
+
         try:
             open_monero_wallet()
             break
@@ -185,8 +161,20 @@ def get_kraken_signature(url: str, payload: dict):
     sigdigest = base64.b64encode(mac.digest())
     return sigdigest.decode()
 
+_nonce_lock = threading.Lock()
+_last_nonce = 0
+
+def get_kraken_nonce() -> str:
+    # Kraken rejects a nonce that isn't larger than the last one it saw.
+    # This makes it less likely to reject without being overly complicated.
+    global _last_nonce
+
+    with _nonce_lock:
+        _last_nonce = max(_last_nonce + 1, int(1000000*time.time()))
+        return str(_last_nonce)
+
 def kraken_request(path: str, payload = {}) -> dict:
-    payload['nonce'] = str(int(1000*time.time()))
+    payload['nonce'] = get_kraken_nonce()
     headers = {}
     headers['API-Key'] = env.KRAKEN_API_KEY
     headers['API-Sign'] = get_kraken_signature(path, payload)
@@ -194,7 +182,8 @@ def kraken_request(path: str, payload = {}) -> dict:
     response = requests.post(
         'https://api.kraken.com' + path,
         headers=headers,
-        data=payload
+        data=payload,
+        timeout=KRAKEN_API_TIMEOUT
     )
 
     response_json = response.json()

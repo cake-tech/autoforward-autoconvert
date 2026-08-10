@@ -7,3 +7,12 @@ MIN_LITECOIN_SEND_AMOUNT_TESTNET = 0.00001
 MIN_MONERO_SEND_AMOUNT_TESTNET = 0.00001
 
 MONERO_WALLET_FILENAME = 'mywallet'
+
+# Request timeouts as (connect, read) seconds.
+FEE_API_TIMEOUT = (10, 10)
+KRAKEN_API_TIMEOUT = (10, 30)
+ELECTRUM_RPC_TIMEOUT = (10, 120)
+MONERO_RPC_TIMEOUT = (10, 300)
+
+# Retries needed before warning the container may not be running
+STALLED_WAIT_ATTEMPTS = 18

@@ -2,6 +2,9 @@
 
 Programs to auto-forward BTC, LTC, LTC-MWEB, and XMR wallets to Kraken, and then auto-convert to your preferred settlement currency (e.g. USD, USDT, BTC).
 
+> [!IMPORTANT]
+> This program keeps four wallet seeds and a Kraken API key in plaintext on the server that runs it. If you are setting it up on a new machine, follow the **[hardening guide](HARDENING.md)** — it covers the server setup, the Kraken key permissions, and the seed handling that this design assumes.
+
 ## Requirements
 
 - Docker
@@ -13,19 +16,22 @@ Create a `.env` file as a copy of `.env.example` and set the values for the empt
 
 ### Environment variables
 
+Every asset is optional. See [Choosing which assets to run](#choosing-which-assets-to-run) — a variable marked "Yes" below is only required for the assets you enable.
+
 | Variable name | Required | Default | Description |
 | - | - | - | - |
-| `BITCOIN_WALLET_SEED` | Yes | - | Your BIP39 Bitcoin mnemonic seed. Used for all Bitcoin-like assets. |
-| `LITECOIN_WALLET_SEED` | Yes | - | Your BIP39 Litecoin mnemonic seed. |
-| `LITECOIN_MWEB_WALLET_SEED` | Yes | - | Your Electrum-format Litecoin MWEB mnemonic seed. |
-| `MONERO_WALLET_SEED` | Yes | - | Your 25 word Monero mnemonic seed. |
-| `MONERO_WALLET_HEIGHT` | Yes | - | The restore height of your Monero wallet. |
+| `COMPOSE_PROFILES` | Yes | - | Comma-separated list of the assets to run: any of `btc`, `ltc`, `ltc-mweb`, `xmr`. |
+| `BITCOIN_WALLET_SEED` | `btc` | - | Your BIP39 Bitcoin mnemonic seed. |
+| `LITECOIN_WALLET_SEED` | `ltc` | - | Your BIP39 Litecoin mnemonic seed. |
+| `LITECOIN_MWEB_WALLET_SEED` | `ltc-mweb` | - | Your Electrum-format Litecoin MWEB mnemonic seed. |
+| `MONERO_WALLET_SEED` | `xmr` | - | Your 25 word Monero mnemonic seed. |
+| `MONERO_WALLET_HEIGHT` | `xmr` | - | The restore height of your Monero wallet. |
 | `ELECTRUM_RPC_PASSWORD` | Yes | - | A new strong password for your Electrum RPCs. |
-| `MONERO_RPC_PASSWORD` | Yes | - | A new strong password for your Monero RPC. |
-| `MONERO_WALLET_PASSWORD` | Yes | - | A new strong password for your Monero Wallet. |
-| `KRAKEN_API_KEY` | Yes | - | Your API key from Kraken. |
+| `MONERO_RPC_PASSWORD` | `xmr` | - | A new strong password for your Monero RPC. |
+| `MONERO_WALLET_PASSWORD` | `xmr` | - | A new strong password for your Monero Wallet. |
+| `KRAKEN_API_KEY` | Yes | - | Your API key from Kraken. Shared by autoforward and autoconvert. |
 | `KRAKEN_API_SECRET` | Yes | - | Your API secret from Kraken. |
-| `MONERO_DAEMON_ADDRESS` | Yes | - | The address of a Monero daemon you own or trust. |
+| `MONERO_DAEMON_ADDRESS` | `xmr` | - | The address of a Monero daemon you own or trust. |
 | `BITCOIN_ELECTRUM_SERVER_ADDRESS` | **No** | - | The address of a Bitcoin Electrum server you own or trust. E.g.: `localhost:50001:t` (no SSL) or `my.electrum.server:50001:s` (SSL). By leaving this blank you're letting Electrum select a random server for you, which may be a privacy concern. |
 | `LITECOIN_ELECTRUM_SERVER_ADDRESS` | **No** | - | The address of a Litecoin Electrum server you own or trust. E.g.: `localhost:50001:t` (no SSL) or `my.electrum.server:50001:s` (SSL). By leaving this blank you're letting Electrum select a random server for you, which may be a privacy concern. |
 | `MAX_NETWORK_FEE_PERCENT` | **No** | `5` | The maximum accepted miner fee percent when auto-forwarding. Not applied to XMR. |
@@ -37,12 +43,31 @@ Create a `.env` file as a copy of `.env.example` and set the values for the empt
 | `LITECOIN_FEE_RATE` | **No** | `halfHourFee` | The fee rate to use in the Litecoin fee source API response. |
 
 
+### Choosing which assets to run
+
+`COMPOSE_PROFILES` decides which assets this deployment handles. List only the ones you want:
+
+```bash
+COMPOSE_PROFILES="btc,xmr"        # Bitcoin and Monero only
+COMPOSE_PROFILES="xmr"            # Monero only
+COMPOSE_PROFILES="btc,ltc,ltc-mweb,xmr"   # everything
+```
+
+You must include at least one asset. Only software for the assets you need will be downloaded; the others will be skipped.
+
 ## Running
 
 After setting the required environment variable values, you can run the containers:
 
 ```bash
 $ docker-compose --env-file .env up -d
+```
+
+Confirm the right assets are live — each program prints what it is managing on startup:
+
+```bash
+$ docker compose logs autoforward | head -1     # e.g. Autoforwarding: btc, xmr
+$ docker compose logs autoconvert | head -1     # e.g. Autoconverting: XBT, XMR
 ```
 
 ## Changing seeds
@@ -71,7 +96,13 @@ The trading strategy utilized in this program is as follows:
 
 We strongly recommend running this program with a dedicated Kraken account to ensure that it does not interfere with any of your other activities.
 
-This trading stategy may not be optimal for your needs. You can configure the `MAX_NETWORK_FEE_PERCENT` environment variable. For illiquid trading pairs that regularly have bid-ask spreads exceeding 1%, consider a higher value than 0.5%. You should consider a different trading strategy if you are sensitive to taker fees.
+This trading stategy may not be optimal for your needs. You can configure the `MAX_SLIPPAGE_PERCENT` environment variable. For illiquid trading pairs that regularly have bid-ask spreads exceeding 1%, consider a higher value than 0.5%. You should consider a different trading strategy if you are sensitive to taker fees.
+
+## Known limitations
+
+### Both programs share one Kraken API key
+
+The same Kraken API key is used for both autoforward (to get fresh deposit addresses) and autoconvert (to trade). It's theoretically possible for a nonce to be rejected, but the worst case scenario is that the single operation will fail and it will work on the next scheduled attempt in a few minutes.
 
 ## Contributing
 

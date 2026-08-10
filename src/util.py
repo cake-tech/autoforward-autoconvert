@@ -124,18 +124,22 @@ def wait_for_rpc():
 def wait_for_wallets():
     for coin in env.ENABLED_ELECTRUM_COINS:
         print(f'Waiting for {coin} wallet...')
+        attempts = 0
 
         while 1:
             try:
                 request_electrum_rpc(coin, 'load_wallet')
                 break
             except:
+                attempts += 1
+                warn_if_container_missing(coin, attempts)
                 time.sleep(10)
 
     if not env.MONERO_ENABLED:
         return
 
     print('Waiting for Monero wallet...')
+    attempts = 0
 
     while 1:
         try:
@@ -151,6 +155,8 @@ def wait_for_wallets():
         except Exception as e:
             print('Failed to open Monero wallet:', e)
 
+        attempts += 1
+        warn_if_container_missing('xmr', attempts)
         time.sleep(10)
 
 def get_kraken_signature(url: str, payload: dict):

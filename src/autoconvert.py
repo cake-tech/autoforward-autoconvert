@@ -40,7 +40,9 @@ def get_pair_details(quote_curency, base_currency):
     return order_min, trade_decimals, volume_decimals
 
 
-# amount is held in quote_currency when selling and in base_currency when buying
+# amount is held in quote_currency when selling and in base_currency when buying.
+# WARNING: these two names are inverted relative to Kraken's own vocabulary. This function's
+# quote_currency is the first asset in the pair string, which Kraken calls the base asset.
 def prepare_and_make_trade(amount, quote_currency, base_currency, payload):
     # Get trading pair details for a direct conversion
     order_min, trade_decimals, volume_decimals = get_pair_details(quote_currency, base_currency)
@@ -57,7 +59,8 @@ def prepare_and_make_trade(amount, quote_currency, base_currency, payload):
     limit_price = mid_market_price * (1 - slippage if is_sell else 1 + slippage) # Example 212.635*(1-0.5/100) = 211.571825
     limit_price = round(limit_price, trade_decimals)  # Example 211.571825 -> 211.57
 
-    # Kraken always denominates volume in quote_currency, so a buy converts what it has to spend
+    # Volume is always denominated in the first asset of the pair, i.e. quote_currency here,
+    # so a buy converts the amount it holds at the limit price to get there
     volume = amount if is_sell else amount / limit_price
     volume = math.floor(volume * 10 ** volume_decimals) / 10 ** volume_decimals  # Rounding up would exceed the balance
 

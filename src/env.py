@@ -7,7 +7,10 @@ def _env(name: str, default: str = '') -> str:
 TESTNET = _env('TESTNET', '0')
 
 ALL_ASSETS = ['btc', 'ltc', 'ltc-mweb', 'xmr']
-ENABLED_ASSETS = [asset.strip().lower() for asset in _env('ENABLED_ASSETS').split(',') if asset.strip()] or ALL_ASSETS
+ENABLED_ASSETS = [asset.strip().lower() for asset in _env('ENABLED_ASSETS').split(',') if asset.strip()]
+
+if not ENABLED_ASSETS:
+    raise SystemExit(f'No assets enabled. Set COMPOSE_PROFILES to at least one of: {", ".join(ALL_ASSETS)}.')
 
 _unknown_assets = [asset for asset in ENABLED_ASSETS if asset not in ALL_ASSETS]
 

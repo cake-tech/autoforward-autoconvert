@@ -49,13 +49,13 @@ Every asset is optional. See [Choosing which assets to run](#choosing-which-asse
 
 ### BIP39 passphrase for the Bitcoin wallet
 
-Adding it to a running deployment does nothing on its own.** The seed importer skips wallets that already exist, so the old wallet keeps being used and no error is raised. To apply a passphrase to an existing setup you have to sweep out the funds first, then follow [Changing seeds](#changing-seeds) to wipe the volumes and re-import.
+Adding it to a running deployment does nothing on its own. The seed importer skips wallets that already exist, so the old wallet keeps being used and no error is raised. To apply a passphrase to an existing setup you have to sweep out the funds first, then follow [Changing seeds](#changing-seeds) to wipe the volumes and re-import.
 
 ### Labeling forwarded transactions in BTCPay
 
 This is supported for Bitcoin and Litecoin (not MWEB) only.
 
-After performing an autoforward transaction and if configured, it will attempt to ***replace*** any metadata for the outgoing transaction with two labels: `autoforward` and `kraken`. Configurable with `BTCPAY_LABEL` and `BTCPAY_DESTINATION_LABEL`.
+After performing an autoforward transaction and if configured, it will attempt to ***replace*** any metadata for the outgoing transaction with two labels: `autoforward` and `kraken`.
 
 To set it up, create an API key under Account -> API Keys with the **"Manage wallet transactions"** permission (`btcpay.store.canmanagewallettransactions`) for that store. This permission covers labeling only. Spending through the Greenfield API is gated separately on `btcpay.store.cancreatetransactions` and `btcpay.store.cansigntransactions`. Requires BTCPay Server 2.4.0 or newer.
 
@@ -69,7 +69,13 @@ COMPOSE_PROFILES="xmr"            # Monero only
 COMPOSE_PROFILES="btc,ltc,ltc-mweb,xmr"   # everything
 ```
 
-You must include at least one asset. Only software for the assets you need will be downloaded; the others will be skipped.
+You must include at least one asset; the programs exit on startup if the list is empty. Only software for the assets you need will be downloaded; the others will be skipped.
+
+*Removing* an asset from the list does not stop a container that is already running. `docker compose up -d` leaves it up, so its wallet daemon keeps running with the seed loaded while nothing sweeps it any more. You need to take it down explicitly with:
+
+```bash
+$ docker compose --profile ltc down
+```
 
 ## Running
 

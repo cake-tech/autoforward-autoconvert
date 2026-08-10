@@ -128,8 +128,8 @@ def label_btcpay_tx(coin: ElectrumCoin, txid: str, labels: List[str]) -> None:
         for label_id in labels:
             util.post_btcpay_greenfield(f'{wallet_path}/objects', {'type': 'label', 'id': label_id})
 
-        # This overwrites the node's data rather than merging into it, so it would replace
-        # a comment or label added before forwarding
+        # This overwrites the node's data rather than merging into it, so it would drop a
+        # comment set before forwarding. Links are rows in their own table and survive.
         util.post_btcpay_greenfield(f'{wallet_path}/objects', {'type': 'tx', 'id': txid})
 
         for label_id in labels:

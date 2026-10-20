@@ -1,4 +1,5 @@
 from typing import List, Literal, cast
+from decimal import Decimal
 from time import sleep, time
 import random
 import traceback
@@ -44,13 +45,16 @@ def get_electrum_balance(coin: ElectrumCoin) -> float:
 def get_electrum_unused_address(coin: ElectrumCoin) -> str:
     return util.request_electrum_rpc(coin, 'getunusedaddress')
 
-def create_psbt(coin: ElectrumCoin, destination_address: str, fee_rate: int = None, unsigned = True) -> str:
+def create_psbt(coin: ElectrumCoin, destination_address: str, fee_rate: int = None, unsigned = True, from_coins: str | None = None) -> str:
     params = {
         'destination': destination_address,
         'amount': '!',
         'feerate': fee_rate,
         'unsigned': unsigned # This way we can get the input amounts
     }
+
+    if from_coins:
+        params['from_coins'] = from_coins
 
     return util.request_electrum_rpc(coin, 'payto', params, timeout=env.SEND_TIMEOUT)
 
@@ -76,13 +80,14 @@ def get_tx_output_amount(coin: ElectrumCoin, tx_id: str, output_index: int) -> i
 
     raise Exception(f'Output {output_index} not found in {coin} transaction {tx_id}')
 
-def get_total_psbt_fee(coin: ElectrumCoin, tx: dict) -> float:
-    inputs_sum_sats = 0
+def get_total_psbt_fee(coin: ElectrumCoin, tx: dict, inputs_sum_sats: int | None = None) -> float:
     outputs_sum_sats = 0
 
-    for _input in tx['inputs']:
-        input_amount = get_tx_output_amount(coin, _input['prevout_hash'], _input['prevout_n'])
-        inputs_sum_sats += input_amount
+    if inputs_sum_sats is None:
+        # One gettransaction per input; a batch passes the sum it already knows.
+        inputs_sum_sats = 0
+        for _input in tx['inputs']:
+            inputs_sum_sats += get_tx_output_amount(coin, _input['prevout_hash'], _input['prevout_n'])
     
     for _output in tx['outputs']:
         outputs_sum_sats += cast(int, _output['value_sats'])
@@ -101,6 +106,54 @@ def find_and_remove_offending_transactions(coin: ElectrumCoin):
         if tx['confirmations'] == -2:
             print(util.get_time(), f'Removing local transaction {tx['txid']} from history...')
             util.request_electrum_rpc(coin, 'removelocaltx', [tx['txid']])
+
+def select_coins(coin: ElectrumCoin) -> tuple[str | None, int, int]:
+    """The outputs this pass may forward: (payto from_coins, their total in
+    sats, how many spendable outputs are left for later passes).
+
+    Only confirmed outputs, and for LTC only those with LITECOIN_MIN_CONFIRMATIONS:
+    MWEB receipts reach the LTC wallet as peg-outs, which consensus will not
+    let anyone spend for PEGOUT_MATURITY (6) blocks. At most
+    ELECTRUM_MAX_INPUTS, largest first, so a backlog goes out in
+    standard-size transactions. from_coins is None when the selection is
+    simply everything, so the usual '!' sweep applies.
+    """
+    utxos = util.request_electrum_rpc(coin, 'listunspent')
+    min_confirmations = env.LITECOIN_MIN_CONFIRMATIONS if coin == 'ltc' else 1
+    tip = util.request_electrum_rpc(coin, 'getinfo')['blockchain_height'] if min_confirmations > 1 else 0
+
+    def confirmations(utxo: dict) -> int:
+        height = utxo.get('height', 0)
+        if height <= 0:
+            return 0
+        return tip - height + 1 if tip else 1
+
+    eligible = [u for u in utxos if confirmations(u) >= min_confirmations]
+    eligible.sort(key=lambda u: Decimal(str(u['value'])), reverse=True)
+    chosen = eligible[:env.ELECTRUM_MAX_INPUTS]
+    total_sats = int(sum(Decimal(str(u['value'])) for u in chosen) * 100000000)
+
+    if len(chosen) == len(utxos):
+        return None, total_sats, 0
+
+    from_coins = ','.join(f"{u['prevout_hash']}:{u['prevout_n']}" for u in chosen)
+    return from_coins, total_sats, len(eligible) - len(chosen)
+
+def get_pegout_address() -> str:
+    # A CHANGE address of the LTC wallet. That wallet is the merchant's LTC
+    # chain, but merchants hand out only receiving addresses to invoices, so
+    # funds arriving here can never be taken for an invoice payment.
+    return util.request_electrum_rpc('ltc', 'listaddresses', {'change': True, 'unused': True})[0]
+
+last_address_report: dict = {}
+
+def report_tracked_addresses(coin: ElectrumCoin) -> None:
+    if time() - last_address_report.get(coin, 0) < env.ELECTRUM_ADDRESS_REPORT_INTERVAL:
+        return
+
+    addresses = util.request_electrum_rpc(coin, 'listaddresses', {'receiving': True}, timeout=env.SEND_TIMEOUT)
+    status.set(coin, receiving_addresses=len(addresses), gap_limit=env.ELECTRUM_GAP_LIMIT)
+    last_address_report[coin] = time()
 
 def broadcast_electrum_tx(coin: ElectrumCoin, signed_tx: str):
     util.request_electrum_rpc(coin, 'broadcast', [signed_tx], timeout=env.SEND_TIMEOUT)
@@ -166,7 +219,7 @@ def get_destination_address(coin: ElectrumCoin | Literal['xmr']) -> str:
             return get_monero_unused_address()
         return get_electrum_unused_address(coin)
 
-    return get_new_kraken_address('ltc' if coin == 'ltc-mweb' else coin)
+    return get_new_kraken_address(coin)
 
 def get_new_kraken_address(asset: Literal['btc', 'ltc', 'xmr']) -> str:
     sym_to_name = {
@@ -200,6 +253,7 @@ def get_new_kraken_address(asset: Literal['btc', 'ltc', 'xmr']) -> str:
 
 def attempt_electrum_autoforward(coin: ElectrumCoin):
     coin_upper = coin.upper()
+    report_tracked_addresses(coin)
     balance = get_electrum_balance(coin)
 
     coin_to_min_send_mainnet: dict[ElectrumCoin, float] = {
@@ -217,8 +271,16 @@ def attempt_electrum_autoforward(coin: ElectrumCoin):
     min_send = coin_to_min_send_testnet[coin] if env.TESTNET == '1' else coin_to_min_send_mainnet[coin]
     status.set(coin, balance=balance, min_send=min_send)
 
+    from_coins, inputs_sum_sats = None, None
+    if coin != 'ltc-mweb':
+        from_coins, inputs_sum_sats, remaining = select_coins(coin)
+        balance = inputs_sum_sats / 100000000  # what this pass can actually forward
+        status.set(coin, forwardable=balance, outputs_left_for_later=remaining)
+        if remaining:
+            print(util.get_time(), f'Batching: this pass forwards the {env.ELECTRUM_MAX_INPUTS} largest {coin_upper} outputs ({balance}); {remaining} left for later passes.')
+
     if balance < min_send:
-        print(util.get_time(), f'Not enough {coin_upper} balance to autoforward. (Balance: {balance}, Min. send: {min_send})')
+        print(util.get_time(), f'Not enough {coin_upper} balance to autoforward. (Forwardable: {balance}, Min. send: {min_send})')
         return
 
     try:
@@ -227,23 +289,30 @@ def attempt_electrum_autoforward(coin: ElectrumCoin):
     except:
         set_electrum_fee_rate(coin, dynamic=True)
 
-    address = get_destination_address(coin)
+    if coin == 'ltc-mweb':
+        # Kraken fails MWEB peg-out deposits, so MWEB never goes to Kraken
+        # directly: it is pegged out to the LTC wallet, whose own pass then
+        # forwards it in a standard transaction once it has matured.
+        address = get_pegout_address()
+        total_fee = None
+        # Electrum-ltc doesn't support deserializing mweb transactions, so we can't check total fee
+        signed_tx = create_psbt(coin, address, unsigned=False)
+    else:
+        address = get_destination_address(coin)
 
-    # Electrum-ltc doesn't support deserializing mweb transactions, so we can't check total fee
-    if coin != 'ltc-mweb':
         try:
-            psbt = create_psbt(coin, address)
+            psbt = create_psbt(coin, address, from_coins=from_coins)
         except requests.exceptions.HTTPError as http_error:
             response_json = cast(dict, http_error.response.json())
 
             if response_json.get('error', {}).get('data', {}).get('exception', '') == 'NotEnoughFunds()':
                 print(util.get_time(), 'Not autoforwarding due to high transaction fee.')
-                return                 
+                return
 
             raise http_error
 
         tx = get_psbt_data(coin, psbt)
-        total_fee = get_total_psbt_fee(coin, tx)
+        total_fee = get_total_psbt_fee(coin, tx, inputs_sum_sats if from_coins else None)
         amount = balance
 
         if total_fee / amount * 100 > env.MAX_NETWORK_FEE_PERCENT:
@@ -251,9 +320,6 @@ def attempt_electrum_autoforward(coin: ElectrumCoin):
             return
 
         signed_tx = sign_psbt(coin, psbt)
-    else:
-        total_fee = None
-        signed_tx = create_psbt(coin, address, unsigned=False)
 
     if env.DRY_RUN:
         status.set(coin, last_dry_run_at=int(time()), last_dry_run_amount=balance, last_dry_run_fee=total_fee)
@@ -272,6 +338,11 @@ def attempt_electrum_autoforward(coin: ElectrumCoin):
             broadcast_electrum_tx(coin, signed_tx)
         else:
             raise e
+
+    if coin == 'ltc-mweb':
+        status.set(coin, last_pegout_at=int(time()), last_pegout_amount=balance)
+        print(util.get_time(), f'Pegged out {balance} LTC from MWEB to {address}; the LTC pass forwards it after {env.LITECOIN_MIN_CONFIRMATIONS} confirmations.')
+        return
 
     status.set(coin, last_forward_at=int(time()), last_forward_amount=balance)
     print(util.get_time(), f'Autoforwarded {balance} {coin_upper} to {address}!')
@@ -324,6 +395,8 @@ def main() -> None:
     unknown = [coin for coin in env.AUTOFORWARD_COINS if coin not in attempts]
     if unknown:
         raise SystemExit(f'Unknown AUTOFORWARD_COINS entries: {unknown}')
+    if 'ltc-mweb' in env.AUTOFORWARD_COINS and 'ltc' not in env.AUTOFORWARD_COINS:
+        raise SystemExit('ltc-mweb pegs out to the LTC wallet, so it needs ltc in AUTOFORWARD_COINS too.')
 
     print('Autoforwarding:', ', '.join(env.AUTOFORWARD_COINS))
     if env.DRY_RUN:

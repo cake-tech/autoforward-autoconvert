@@ -39,8 +39,11 @@ class FakeResponse:
 class Backends:
     """Canned answers for exactly the calls the forward/sale paths make."""
 
-    def __init__(self):
+    def __init__(self, utxos=None, tip=1000):
         self.sent = []
+        # One mature output by default; tests of selection pass their own.
+        self.utxos = utxos if utxos is not None else [utxo('aa', 0, '1.5', tip - 100)]
+        self.tip = tip
 
     def post(self, url, headers=None, data=None, json=None, auth=None, timeout=None):
         if url.startswith('https://api.kraken.com'):
@@ -62,6 +65,9 @@ class Backends:
     def electrum(self, method, params):
         return {
             'getbalance': {'confirmed': '1.5'},  # over every coin's default minimum
+            'listunspent': self.utxos,
+            'getinfo': {'blockchain_height': self.tip},
+            'listaddresses': ['ltc1qchangeaddress'],
             'setconfig': True,
             'getunusedaddress': 'bc1qownaddress',
             'payto': 'psbt',
@@ -109,7 +115,11 @@ class Backends:
         return moved
 
 
-def load(module, dry_run, kraken_key):
+def utxo(txid, n, value, height):
+    return {'prevout_hash': txid, 'prevout_n': n, 'value': value, 'height': height}
+
+
+def load(module, dry_run, kraken_key, **extra_env):
     environment = {
         'DRY_RUN': '1' if dry_run else '0',
         'TESTNET': '0',
@@ -119,6 +129,7 @@ def load(module, dry_run, kraken_key):
         'MONERO_RPC_URL': 'http://monero-wallet-rpc:18082/json_rpc',
         'BITCOIN_ELECTRUM_RPC_URL': 'http://btc-electrum:7000',
         'LITECOIN_MWEB_ELECTRUM_RPC_URL': 'http://ltc-mweb-electrum:7000',
+        **extra_env,
     }
     with mock.patch.dict(os.environ, environment):
         for name in ('env', 'constants', 'util', 'status', module):
@@ -148,7 +159,8 @@ SCENARIOS = [
     # (name, module, kraken key configured, action)
     ('btc to own address', 'autoforward', False, forward('btc')),
     ('btc to Kraken', 'autoforward', True, forward('btc')),
-    ('ltc-mweb to Kraken', 'autoforward', True, forward('ltc-mweb')),
+    ('ltc-mweb peg-out', 'autoforward', True, forward('ltc-mweb')),
+    ('ltc to Kraken', 'autoforward', True, forward('ltc')),
     ('xmr to own address', 'autoforward', False, forward('xmr')),
     ('xmr to Kraken', 'autoforward', True, forward('xmr')),
     ('sell xmr on Kraken', 'autoconvert', True, sell),
@@ -172,6 +184,43 @@ class DryRunNeverMovesFunds(unittest.TestCase):
             with self.subTest(name, dry_run=False):
                 backends = self.run_scenario(module_name, kraken_key, action, dry_run=False)
                 self.assertNotEqual(backends.fund_moving(), [], backends.sent)
+
+
+class ForwardSelection(unittest.TestCase):
+    """Which outputs a live pass spends."""
+
+    def forward(self, coin, backends, **extra_env):
+        with mock.patch('requests.post', backends.post), mock.patch('requests.get', backends.get):
+            load('autoforward', dry_run=False, kraken_key=True, **extra_env).attempt_electrum_autoforward(coin)
+        return [params for backend, method, params in backends.sent if method == 'payto']
+
+    def test_ltc_waits_for_peg_out_maturity(self):
+        # Consensus rejects spending a peg-out before PEGOUT_MATURITY (6)
+        # blocks, and MWEB receipts reach the LTC wallet as peg-outs.
+        tip = 1000
+        immature = Backends(utxos=[utxo('aa', 0, '1.5', tip - 4)], tip=tip)  # 5 confirmations
+        self.assertEqual(self.forward('ltc', immature), [])
+        mature = Backends(utxos=[utxo('aa', 0, '1.5', tip - 5)], tip=tip)  # 6 confirmations
+        self.assertEqual(len(self.forward('ltc', mature)), 1)
+
+    def test_backlog_goes_out_in_standard_size_batches(self):
+        # Thousands of inputs would exceed the 100 kvB standard size and
+        # never relay: each pass spends at most ELECTRUM_MAX_INPUTS, largest first.
+        utxos = [utxo(f'{i:064x}', 0, f'0.{i + 1:08d}', 10) for i in range(1000)]
+        backends = Backends(utxos=utxos)
+        payto = self.forward('btc', backends, ELECTRUM_MAX_INPUTS='400')
+        self.assertEqual(len(payto), 1)
+        chosen = payto[0]['from_coins'].split(',')
+        self.assertEqual(len(chosen), 400)
+        self.assertEqual(chosen[0], f'{999:064x}:0')  # the largest output first
+
+    def test_mweb_is_pegged_out_to_an_ltc_change_address_not_sent_to_kraken(self):
+        backends = Backends()
+        payto = self.forward('ltc-mweb', backends)
+        self.assertEqual([p['destination'] for p in payto], ['ltc1qchangeaddress'])
+        self.assertFalse([1 for b, method, p in backends.sent if method.startswith('/0/private/DepositAddresses')])
+        self.assertIn({'change': True, 'unused': True},
+                      [p for b, method, p in backends.sent if method == 'listaddresses'])
 
 
 class DryRunIsTheDefault(unittest.TestCase):

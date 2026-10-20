@@ -24,7 +24,11 @@ services:
     container_name: ltc-electrum
     restart: unless-stopped
     volumes:
-      - litecoin-data:/home/electrum-ltc/.electrum
+      # Electrum-LTC's data dir: the image's user is `electrum`, and it writes
+      # .electrum-ltc. (Upstream mounted /home/electrum-ltc/.electrum, a path
+      # nothing uses, so the wallets lived in the container and a recreate
+      # lost them.)
+      - litecoin-data:/home/electrum/.electrum-ltc
     environment:
       - TESTNET=${TESTNET}
       - ELECTRUM_RPC_USER=user
@@ -40,7 +44,7 @@ services:
     container_name: ltc-mweb-electrum
     restart: unless-stopped
     volumes:
-      - litecoin-mweb-data:/home/electrum-ltc/.electrum
+      - litecoin-mweb-data:/home/electrum/.electrum-ltc
     environment:
       - TESTNET=${TESTNET}
       - ELECTRUM_RPC_USER=user
@@ -72,6 +76,7 @@ services:
       - TESTNET=${TESTNET}
       - AUTOFORWARD_COINS=${AUTOFORWARD_COINS:-btc,ltc,ltc-mweb,xmr}
       - DRY_RUN=${DRY_RUN:-1}
+      - ELECTRUM_GAP_LIMIT=${ELECTRUM_GAP_LIMIT:-1000}
       - BITCOIN_ELECTRUM_RPC_URL=http://btc-electrum:7000
       - LITECOIN_ELECTRUM_RPC_URL=http://ltc-electrum:7000
       - LITECOIN_MWEB_ELECTRUM_RPC_URL=http://ltc-mweb-electrum:7000
@@ -104,6 +109,7 @@ services:
       - TESTNET=${TESTNET}
       - AUTOFORWARD_COINS=${AUTOFORWARD_COINS:-btc,ltc,ltc-mweb,xmr}
       - DRY_RUN=${DRY_RUN:-1}
+      - ELECTRUM_GAP_LIMIT=${ELECTRUM_GAP_LIMIT:-1000}
       - BITCOIN_ELECTRUM_RPC_URL=http://btc-electrum:7000
       - LITECOIN_ELECTRUM_RPC_URL=http://ltc-electrum:7000
       - LITECOIN_MWEB_ELECTRUM_RPC_URL=http://ltc-mweb-electrum:7000
@@ -143,6 +149,7 @@ services:
       - TESTNET=${TESTNET}
       - AUTOFORWARD_COINS=${AUTOFORWARD_COINS:-btc,ltc,ltc-mweb,xmr}
       - DRY_RUN=${DRY_RUN:-1}
+      - ELECTRUM_GAP_LIMIT=${ELECTRUM_GAP_LIMIT:-1000}
       - KRAKEN_API_KEY=${KRAKEN_API_KEY}
       - KRAKEN_API_SECRET=${KRAKEN_API_SECRET}
       - SETTLEMENT_CURRENCY=${SETTLEMENT_CURRENCY}

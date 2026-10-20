@@ -125,6 +125,13 @@ def wait_for_rpc():
                 break
             time.sleep(10)
 
+def ensure_gap_limit(coin: Literal['btc', 'ltc', 'ltc-mweb']) -> None:
+    try:
+        request_electrum_rpc(coin, 'changegaplimit', [env.ELECTRUM_GAP_LIMIT, True], timeout=env.SEND_TIMEOUT)
+        print(f'{ELECTRUM_COIN_NAMES[coin]} gap limit: {env.ELECTRUM_GAP_LIMIT}')
+    except Exception as e:
+        print(f'Could not set the {ELECTRUM_COIN_NAMES[coin]} gap limit to {env.ELECTRUM_GAP_LIMIT}:', e)
+
 def wait_for_wallets():
     for coin in enabled_electrum_coins():
         print(f'Waiting for {ELECTRUM_COIN_NAMES[coin]} wallet...')
@@ -135,6 +142,8 @@ def wait_for_wallets():
                 break
             except:
                 time.sleep(10)
+
+        ensure_gap_limit(coin)
 
     if 'xmr' not in env.AUTOFORWARD_COINS:
         return

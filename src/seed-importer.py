@@ -65,7 +65,7 @@ if 'btc' in env.AUTOFORWARD_COINS:
   try:
      import_bitcoin_seed()
      util.request_electrum_rpc('btc', 'load_wallet')
-     util.request_electrum_rpc('btc', 'changegaplimit', [1000, 'iknowhatimdoing'])
+     util.request_electrum_rpc('btc', 'changegaplimit', [env.ELECTRUM_GAP_LIMIT, True])
      print('Bitcoin seed has successfully been imported!')
   except Exception as e:
      if 'Remove the existing wallet first!' in e.__str__():
@@ -79,7 +79,7 @@ if 'ltc' in env.AUTOFORWARD_COINS:
   try:
      import_litecoin_seed()
      util.request_electrum_rpc('ltc', 'load_wallet')
-     util.request_electrum_rpc('ltc', 'changegaplimit', [1000, 'iknowhatimdoing'])
+     util.request_electrum_rpc('ltc', 'changegaplimit', [env.ELECTRUM_GAP_LIMIT, True])
      print('Litecoin seed has successfully been imported!')
   except Exception as e:
      if 'Remove the existing wallet first!' in e.__str__():
@@ -92,7 +92,7 @@ if 'ltc-mweb' in env.AUTOFORWARD_COINS:
   try:
      import_litecoin_mweb_seed()
      util.request_electrum_rpc('ltc-mweb', 'load_wallet')
-     util.request_electrum_rpc('ltc-mweb', 'changegaplimit', [1000, 'iknowhatimdoing'])
+     util.request_electrum_rpc('ltc-mweb', 'changegaplimit', [env.ELECTRUM_GAP_LIMIT, True])
      print('Litecoin mimblewimble seed has successfully been imported!')
   except Exception as e:
      if 'Remove the existing wallet first!' in e.__str__():

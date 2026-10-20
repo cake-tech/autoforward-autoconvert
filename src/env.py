@@ -25,6 +25,26 @@ HTTP_TIMEOUT = float(os.getenv('HTTP_TIMEOUT', '60'))
 # Building and signing a sweep of many inputs is slow; give it longer.
 SEND_TIMEOUT = float(os.getenv('SEND_TIMEOUT', '600'))
 
+# Electrum only generates (and so only sees payments to) addresses up to
+# this many past the last one it has seen used. A merchant that issues one
+# address per invoice needs it larger than the longest run of unpaid
+# invoices: Cake Pay's LTC chain once had a run of 1093, past the old 1000,
+# and every later payment went unseen. Applied at every startup, so raising
+# it reaches existing wallets too (Electrum then scans the new addresses).
+ELECTRUM_GAP_LIMIT = int(os.getenv('ELECTRUM_GAP_LIMIT', '1000'))
+# At most this many inputs per forward: a sweep of thousands of outputs would
+# exceed the 100 kvB standard transaction size and never relay. The rest
+# goes in later passes, largest outputs first.
+ELECTRUM_MAX_INPUTS = int(os.getenv('ELECTRUM_MAX_INPUTS', '400'))
+# LTC outputs are forwarded only with this many confirmations: MWEB receipts
+# arrive as peg-outs, which consensus makes unspendable for 6 blocks
+# (PEGOUT_MATURITY, bad-txns-premature-spend-of-pegout).
+LITECOIN_MIN_CONFIRMATIONS = int(os.getenv('LITECOIN_MIN_CONFIRMATIONS', '6'))
+# How often to report how many receiving addresses each wallet tracks (for
+# the monitor that compares it with the merchant's address index). Listing
+# them is not free on a wallet with 100k+ addresses.
+ELECTRUM_ADDRESS_REPORT_INTERVAL = int(os.getenv('ELECTRUM_ADDRESS_REPORT_INTERVAL', '3600'))
+
 # monero-wallet-rpc only writes its cache on close, so without a periodic
 # `store` a restart re-syncs everything since the wallet was last closed.
 MONERO_STORE_INTERVAL = int(os.getenv('MONERO_STORE_INTERVAL', '3600'))

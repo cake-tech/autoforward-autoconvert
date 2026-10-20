@@ -1,3 +1,4 @@
+import math
 import traceback
 import random
 import time
@@ -7,6 +8,13 @@ import status
 
 balances = {}
 asset_name_to_id = {}
+pairs = {}
+
+# Tried in order when an asset has no market with the settlement currency.
+# Value can sit in the intermediary if its second leg is below the minimum.
+INTERMEDIARY_CURRENCIES = ['USD', 'USDT', 'USDC', 'EUR', 'XBT']
+PROCEEDS_POLLS = 6
+PROCEEDS_POLL_SECONDS = 5
 
 def load_asset_names_and_ids():
     global asset_name_to_id
@@ -30,44 +38,107 @@ def get_balance(asset: str) -> float:
         return 0
 
 
-def get_pair_details(quote_curency, base_currency):
-    pair_details_result = util.kraken_request('/0/public/AssetPairs', {'pair': f'{quote_curency}{base_currency}'})
-    pair_id = next(iter(pair_details_result))
-    pair_details = pair_details_result[pair_id]
-    order_min = float(pair_details['ordermin'])
-    trade_decimals = int(pair_details['pair_decimals'])
-    return order_min, trade_decimals
+def load_pairs():
+    """Index Kraken's tradable pairs by (base, quote) altname, e.g. ('ZEC', 'USD').
+
+    Routes are chosen from this table, so a pair that does not exist (ZEC has
+    no USDT market) is a lookup miss rather than a failed API call that logs
+    an error on every pass.
+    """
+    global pairs
+    id_to_name = {asset_id: name for name, asset_id in asset_name_to_id.items()}
+    loaded = {}
+    for pair_id, details in util.kraken_request('/0/public/AssetPairs').items():
+        if details.get('status', 'online') != 'online':
+            continue
+        base, quote = id_to_name.get(details['base']), id_to_name.get(details['quote'])
+        if base and quote:
+            loaded[(base, quote)] = dict(details, pair_id=pair_id)
+    pairs = loaded
 
 
-def prepare_and_make_trade(balance, quote_currency, base_currency, payload):
-    # Get trading pair details for a direct conversion
-    order_min, trade_decimals = get_pair_details(quote_currency, base_currency)
+def has_market(a: str, b: str) -> bool:
+    return (a, b) in pairs or (b, a) in pairs
 
-    # If we continue, then we got the order_min and trade_decimals for the pair without issues
-    # We ensure we have more than the minimum to trade
-    if balance > order_min:
-        # We get the current orderbook to calculate the mid market price
-        orderbook_result = util.kraken_request('/0/public/Depth?count=1', {'pair': f'{quote_currency}{base_currency}'})
-        pair_id = next(iter(orderbook_result))
-        orderbook = orderbook_result[pair_id]
 
-        # We make the trade
-        mid_market_price = float(orderbook['bids'][0][0]) + ((float(orderbook['asks'][0][0]) - float(orderbook['bids'][0][0])) / 2) # Example 212.55+((212.72-212.55)/2) = 212.635
-        limit_price = mid_market_price * (1-env.MAX_SLIPPAGE_PERCENT/100) # Example 212.365*(1-0.5/100) = 211.303175
-        limit_price = round(limit_price, trade_decimals)  # Example 211.303175 -> 211.30
-        payload['price'] = limit_price
-        if env.DRY_RUN:
-            # Kraken checks the order (pair, volume, price, funds) and places nothing.
-            payload['validate'] = True
-            util.kraken_request('/0/private/AddOrder', payload)
-            print(util.get_time(), f'DRY RUN: Kraken validated selling {balance} for pair {payload["pair"]} at limit {limit_price}; not placed.')
-            return False
-        util.kraken_request('/0/private/AddOrder', payload)
-        print(util.get_time(), f'Selling up to {balance} {quote_currency if payload["type"] == "sell" else base_currency} for pair {payload['pair']} for limit price {limit_price}')
-        return True
+def find_route(asset: str, settlement_currency: str) -> list[str] | None:
+    if has_market(asset, settlement_currency):
+        return [asset, settlement_currency]
+    for intermediary in INTERMEDIARY_CURRENCIES:
+        if intermediary not in (asset, settlement_currency) \
+                and has_market(asset, intermediary) and has_market(intermediary, settlement_currency):
+            return [asset, intermediary, settlement_currency]
+    return None
+
+
+def round_down(value: float, decimals: int) -> float:
+    factor = 10 ** decimals
+    return math.floor(value * factor) / factor
+
+
+def convert(amount: float, from_asset: str, to_asset: str) -> float | None:
+    """Turn `amount` of from_asset into to_asset with one IOC limit order.
+
+    Sells on a from/to market, buys on a to/from one. Returns the amount of
+    to_asset the order should yield after fees, or None when `amount` is
+    below the market's minimum. Under DRY_RUN Kraken validates the order and
+    places nothing.
+    """
+    selling = (from_asset, to_asset) in pairs
+    pair = pairs[(from_asset, to_asset)] if selling else pairs[(to_asset, from_asset)]
+    book = util.kraken_request('/0/public/Depth', {'pair': pair['pair_id'], 'count': 1})[pair['pair_id']]
+    bid, ask = float(book['bids'][0][0]), float(book['asks'][0][0])
+    mid = (bid + ask) / 2
+    fee = env.KRAKEN_FEE_MARGIN_PERCENT / 100
+
+    # The limit is the worst price accepted: below mid to sell, above mid
+    # to buy. A buy limited below mid never fills as IOC, which would leave
+    # the first leg's proceeds sitting in the intermediary.
+    if selling:
+        price = round(mid * (1 - env.MAX_SLIPPAGE_PERCENT / 100), int(pair['pair_decimals']))
+        volume = round_down(amount, int(pair['lot_decimals']))
+        receives = volume * price * (1 - fee)
     else:
-        print(f'{quote_currency} balance {balance} is below the minimum of {order_min}; skipping')
-        return False
+        price = round(mid * (1 + env.MAX_SLIPPAGE_PERCENT / 100), int(pair['pair_decimals']))
+        # Kraken's volume is in the base (bought) asset and a buy's fee is
+        # charged in the quote. Sized at the ask, which is where it fills;
+        # sizing at the limit would leave the slippage allowance behind in
+        # the intermediary. The fee margin over the real fee absorbs a move.
+        volume = round_down(amount / (ask * (1 + fee)), int(pair['lot_decimals']))
+        receives = volume
+
+    if volume < float(pair['ordermin']) or volume * price < float(pair.get('costmin') or 0):
+        print(f'{amount} {from_asset} is below the minimum for {pair["altname"]} (ordermin {pair["ordermin"]} {to_asset if not selling else from_asset}); skipping')
+        return None
+
+    payload = {
+        'ordertype': 'limit',
+        'timeinforce': 'IOC',  # fill what the book allows now, cancel the rest
+        'type': 'sell' if selling else 'buy',
+        'pair': pair['altname'],
+        'volume': volume,
+        'price': price,
+    }
+    action = f'{"selling" if selling else "buying"} {volume} {from_asset if selling else to_asset} on {pair["altname"]} at limit {price}'
+    if env.DRY_RUN:
+        payload['validate'] = True
+        util.kraken_request('/0/private/AddOrder', payload)
+        print(util.get_time(), f'DRY RUN: Kraken validated {action}; not placed.')
+    else:
+        util.kraken_request('/0/private/AddOrder', payload)
+        print(util.get_time(), action[0].upper() + action[1:])
+    return receives
+
+
+def wait_for_increase(asset: str, before: float) -> float:
+    """What a just-filled order added to `asset`, once Kraken's balance shows it."""
+    for _ in range(PROCEEDS_POLLS):
+        load_balances()
+        delta = get_balance(asset) - before
+        if delta > 0:
+            return delta
+        time.sleep(PROCEEDS_POLL_SECONDS)
+    return 0.0
 
 
 def attempt_sell(asset: str, settlement_currency: str):
@@ -78,53 +149,32 @@ def attempt_sell(asset: str, settlement_currency: str):
         print(f'No balance for {asset}; skipping')
         return
 
-    payload = {
-        'ordertype': 'limit',
-        'timeinforce': 'IOC' # Immediately fill order to extent possible, then cancel
-    }
+    route = find_route(asset, settlement_currency)
+    if route is None:
+        raise Exception(f'Kraken has no market from {asset} to {settlement_currency}, directly or via {", ".join(INTERMEDIARY_CURRENCIES)}')
 
-    try:
-        payload['type'] = 'sell'
-        payload['pair'] = f'{asset}{settlement_currency}'
-        payload['volume'] = balance
-        if prepare_and_make_trade(balance, asset, settlement_currency, payload):
+    if len(route) == 2:
+        if convert(balance, asset, settlement_currency) is not None and not env.DRY_RUN:
             status.set(asset, last_sell_at=int(time.time()), last_sell_amount=balance)
-    except Exception as e:
-        print('prepare_and_make_trade error: ', e)
-        # If we are here, then there is an issue getting the pair details and executing the trade
-        # Either there is a Kraken error, or this trading pair does not exist
-        print('Attempting to sell indirectly via other assets')
+        return
 
-        for intermediary_currency in ['USD', 'USDT', 'USDC', 'EUR', 'XBT']:
-            # NOTE: it's possible for the conversion to be "stuck" in the intermediary currency if there is not enough to convert out of
-            # Remove any intermediary currencies that you don't want value to get potentially stuck in
-            # Conversion fees apply: https://www.kraken.com/features/fee-schedule#spot-crypto
-            # Fees are lower for trades between stablecoins/FX, such as USDT/EUR
-            try:
-                get_pair_details(asset, intermediary_currency)  # Using asset as quote currency and intermediary as base currency
-                get_pair_details(settlement_currency, intermediary_currency)  # Using settlement currency as quote currency and intermediary as base currency
-                # If we made it here, then a route through the intermediary currency exists (we would have gotten an error with get_pair_details if it didn't)
-                # Start the first trade, selling the asset for the base intermediary currency
-                payload['type'] = 'sell'
-                payload['pair'] = f'{asset}{intermediary_currency}'
-                payload['volume'] = balance
-                if not prepare_and_make_trade(balance, asset, intermediary_currency, payload):
-                    break  # below this route's minimum; a second leg would sell an unrelated balance
-                load_balances()
-                intermediary_balance = get_balance(intermediary_currency)
-                # Start the second trade, buying the quote settlement currency with the base intermediary currency balance
-                payload['type'] = 'buy'
-                payload['pair'] = f'{settlement_currency}{intermediary_currency}'
-                payload['volume'] = intermediary_balance
-                # The minimum to check is the intermediary's, not the asset's.
-                prepare_and_make_trade(intermediary_balance, settlement_currency, intermediary_currency, payload)
-                status.set(asset, last_sell_at=int(time.time()), last_sell_amount=balance, last_sell_via=intermediary_currency)
-                # The balance is spent: trying the next intermediary would
-                # only re-submit a sale of funds that are already gone.
-                break
-            except:
-                print(f'No path found through {intermediary_currency}')
-                continue
+    # NOTE: conversion fees apply to each leg:
+    # https://www.kraken.com/features/fee-schedule#spot-crypto
+    intermediary = route[1]
+    before = get_balance(intermediary) if intermediary in asset_name_to_id else 0.0
+    expected = convert(balance, asset, intermediary)
+    if expected is None:
+        return
+
+    # Only this sale's proceeds go on to the settlement currency: whatever
+    # else the account holds in the intermediary is not ours to convert.
+    proceeds = expected if env.DRY_RUN else wait_for_increase(intermediary, before)
+    if proceeds <= 0:
+        raise Exception(f'sold {asset} for {intermediary} but no {intermediary} proceeds showed up in the balance; '
+                        f'convert them to {settlement_currency} by hand')
+    convert(proceeds, intermediary, settlement_currency)
+    if not env.DRY_RUN:
+        status.set(asset, last_sell_at=int(time.time()), last_sell_amount=balance, last_sell_via=intermediary)
 
 if __name__ == '__main__':
     if env.TESTNET == '1':
@@ -150,6 +200,8 @@ if __name__ == '__main__':
         try:
             if not asset_name_to_id:
                 load_asset_names_and_ids()
+            if not pairs:
+                load_pairs()
             load_balances()
             status.ok('kraken')
         except Exception as e:

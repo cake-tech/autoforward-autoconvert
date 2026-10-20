@@ -35,6 +35,17 @@ Create a `.env` file as a copy of `.env.example` and set the values for the empt
 | `BITCOIN_FEE_RATE` | **No** | `halfHourFee` | The fee rate to use in the Bitcoin fee source API response. |
 | `LITECOIN_FEE_SOURCE` | **No** | `https://litecoinspace.org/api/v1/fees/recommended` | The fee API source to use for Litecoin transactions. |
 | `LITECOIN_FEE_RATE` | **No** | `halfHourFee` | The fee rate to use in the Litecoin fee source API response. |
+| `AUTOFORWARD_COINS` | **No** | `btc,ltc,ltc-mweb,xmr` | Comma-separated wallets to autoforward. A coin left out is not waited for at startup, not imported by the seed importer and never swept. |
+| `AUTOCONVERT_ASSETS` | **No** | `XBT,LTC,XMR` | Comma-separated Kraken asset altnames that autoconvert sells (e.g. add `ZEC`). |
+| `MIN_BITCOIN_SEND_AMOUNT` | **No** | `0.0001` | Minimum confirmed BTC balance before forwarding (batching threshold). |
+| `MIN_LITECOIN_SEND_AMOUNT` | **No** | `0.05` | Minimum confirmed LTC balance before forwarding; applies to LTC and LTC-MWEB. |
+| `MIN_MONERO_SEND_AMOUNT` | **No** | `0.03` | Minimum unlocked XMR balance before sweeping. |
+| `MONERO_WALLET_FILENAME` | **No** | `mywallet` | Wallet file name inside the monero-wallet-rpc volume. |
+| `MONERO_SUBADDRESS_LOOKAHEAD` | **No** | `50:20000` (compose) | `major:minor` subaddress lookahead, applied once right after the seed is restored. Must exceed the longest run of unused subaddresses the merchant can create (one per unpaid invoice), or later payments are never seen. To change it on an existing wallet, call `set_subaddress_lookahead` and then `rescan_blockchain`. |
+| `MONERO_WALLET_RPC_VERSION` | **No** | `v0.18.5.1` | Tag of `ghcr.io/sethforprivacy/simple-monero-wallet-rpc` to build from. |
+| `HTTP_TIMEOUT` | **No** | `60` | Seconds before any RPC/HTTP request is abandoned. |
+| `SEND_TIMEOUT` | **No** | `600` | Timeout for building, signing and broadcasting a sweep. |
+| `MONERO_STORE_INTERVAL` | **No** | `3600` | Seconds between `store` calls, so a restart does not re-sync from the last close. The wallet is also stored after every sweep. |
 
 
 ## Running
@@ -44,6 +55,10 @@ After setting the required environment variable values, you can run the containe
 ```bash
 $ docker-compose --env-file .env up -d
 ```
+
+## Monitoring
+
+`autoforward` and `autoconvert` each rewrite `status/<program>.json` after every pass (bind-mounted at `/status`). `updated` is the heartbeat; each section (a coin, a Kraken asset, `kraken`, `xmr-receipts`) carries `last_ok`, `last_error_at`, `last_error` and `errors_total`, plus balances and the last forward or sale. The `xmr` section also reports `max_received_subaddress`: compare it with the merchant wallet's highest paid subaddress to catch payments that fell outside the lookahead.
 
 ## Changing seeds
 

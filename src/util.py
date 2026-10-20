@@ -89,6 +89,37 @@ def request_monero_rpc(method: str, params: dict = {}, timeout: float | None = N
 
     return response_json['result']
 
+def request_zcash_rpc(method: str, params: list = [], timeout: float | None = None):
+    # bitcoind's JSON-RPC 1.0 dialect: an error comes back as {"error": {...}}, often with
+    # HTTP 500, so the body is read before the status.
+    response = requests.post(
+        env.ZCASH_RPC_URL,
+        json={'jsonrpc': '1.0', 'id': 'autoforward', 'method': method, 'params': params},
+        auth=(env.ZCASH_RPC_USERNAME, env.ZCASH_RPC_PASSWORD),
+        timeout=timeout or env.HTTP_TIMEOUT
+    )
+
+    response_json = response.json()
+
+    if response_json.get('error'):
+        raise Exception(response_json['error'])
+
+    response.raise_for_status()
+
+    return response_json['result']
+
+def require_zcash_ready() -> None:
+    # zecd's /readyz is 200 only once the wallet has scanned to within a few blocks of the
+    # tip. A wallet still catching up reports a partial balance, so never sweep from one.
+    response = requests.get(env.ZCASH_HEALTH_URL.rstrip('/') + '/readyz', timeout=env.PROBE_TIMEOUT)
+
+    if response.status_code != 200:
+        try:
+            reason = response.json().get('reason', response.text)
+        except ValueError:
+            reason = response.text
+        raise Exception(f'Zcash wallet not ready ({response.status_code}): {reason}')
+
 def open_bitcoin_wallet():
     request_electrum_rpc('btc', 'load_wallet')
 
@@ -116,6 +147,18 @@ def wait_for_rpc():
         while 1:
             try:
                 request_electrum_rpc(coin, 'getinfo')
+                break
+            except:
+                time.sleep(10)
+
+    if 'zec' in env.AUTOFORWARD_COINS:
+        # Only that zecd answers: a from-birthday restore can take hours to reach the tip,
+        # and each pass checks readiness itself.
+        print('Waiting for Zcash RPC...')
+
+        while 1:
+            try:
+                request_zcash_rpc('getblockchaininfo', timeout=env.PROBE_TIMEOUT)
                 break
             except:
                 time.sleep(10)

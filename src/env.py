@@ -13,6 +13,11 @@ TESTNET = os.getenv('TESTNET', '0')
 # do_not_relay, Kraken orders are sent with validate=true, and no new Kraken
 # deposit address is created. Off only when explicitly "0".
 DRY_RUN = os.getenv('DRY_RUN', '1') != '0'
+# Broadcast MWEB peg-outs even in a dry run. A peg-out only moves coins
+# between the operator's own wallets (MWEB -> an LTC change address), so a
+# test bed can exercise the real peg-out, its maturity and the LTC pass that
+# follows while every forward to the exchange stays a dry run.
+PEGOUT_LIVE = os.getenv('PEGOUT_LIVE', '0') == '1'
 
 # Which wallets autoforward sweeps, and which Kraken assets autoconvert sells.
 # A coin left out is neither waited for at startup nor touched in the loop.

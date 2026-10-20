@@ -76,6 +76,7 @@ services:
       - TESTNET=${TESTNET}
       - AUTOFORWARD_COINS=${AUTOFORWARD_COINS:-btc,ltc,ltc-mweb,xmr}
       - DRY_RUN=${DRY_RUN:-1}
+      - PEGOUT_LIVE=${PEGOUT_LIVE:-0}
       - ELECTRUM_GAP_LIMIT=${ELECTRUM_GAP_LIMIT:-1000}
       - BITCOIN_ELECTRUM_RPC_URL=http://btc-electrum:7000
       - LITECOIN_ELECTRUM_RPC_URL=http://ltc-electrum:7000
@@ -109,6 +110,7 @@ services:
       - TESTNET=${TESTNET}
       - AUTOFORWARD_COINS=${AUTOFORWARD_COINS:-btc,ltc,ltc-mweb,xmr}
       - DRY_RUN=${DRY_RUN:-1}
+      - PEGOUT_LIVE=${PEGOUT_LIVE:-0}
       - ELECTRUM_GAP_LIMIT=${ELECTRUM_GAP_LIMIT:-1000}
       - BITCOIN_ELECTRUM_RPC_URL=http://btc-electrum:7000
       - LITECOIN_ELECTRUM_RPC_URL=http://ltc-electrum:7000
@@ -149,6 +151,7 @@ services:
       - TESTNET=${TESTNET}
       - AUTOFORWARD_COINS=${AUTOFORWARD_COINS:-btc,ltc,ltc-mweb,xmr}
       - DRY_RUN=${DRY_RUN:-1}
+      - PEGOUT_LIVE=${PEGOUT_LIVE:-0}
       - ELECTRUM_GAP_LIMIT=${ELECTRUM_GAP_LIMIT:-1000}
       - KRAKEN_API_KEY=${KRAKEN_API_KEY}
       - KRAKEN_API_SECRET=${KRAKEN_API_SECRET}

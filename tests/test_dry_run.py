@@ -223,6 +223,25 @@ class ForwardSelection(unittest.TestCase):
                       [p for b, method, p in backends.sent if method == 'listaddresses'])
 
 
+class PegoutLive(unittest.TestCase):
+    """PEGOUT_LIVE makes only the own-wallet peg-out real."""
+
+    def run_dry(self, action, **extra_env):
+        backends = Backends()
+        with mock.patch('requests.post', backends.post), mock.patch('requests.get', backends.get):
+            action(load('autoforward', dry_run=True, kraken_key=True, **extra_env))
+        return backends
+
+    def test_peg_out_is_broadcast(self):
+        backends = self.run_dry(forward('ltc-mweb'), PEGOUT_LIVE='1')
+        self.assertIn('electrum broadcast', backends.fund_moving())
+
+    def test_every_forward_to_the_exchange_stays_dry(self):
+        for coin in ('btc', 'ltc', 'xmr'):
+            with self.subTest(coin):
+                self.assertEqual(self.run_dry(forward(coin), PEGOUT_LIVE='1').fund_moving(), [])
+
+
 class DryRunIsTheDefault(unittest.TestCase):
     def test_unset_means_dry_run(self):
         with mock.patch.dict(os.environ, {}, clear=False):

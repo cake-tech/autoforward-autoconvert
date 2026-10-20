@@ -321,7 +321,7 @@ def attempt_electrum_autoforward(coin: ElectrumCoin):
 
         signed_tx = sign_psbt(coin, psbt)
 
-    if env.DRY_RUN:
+    if env.DRY_RUN and not (coin == 'ltc-mweb' and env.PEGOUT_LIVE):
         status.set(coin, last_dry_run_at=int(time()), last_dry_run_amount=balance, last_dry_run_fee=total_fee)
         print(util.get_time(), f'DRY RUN: built and signed a {balance} {coin_upper} forward to {address} (fee {total_fee}); not broadcast.')
         return
@@ -401,6 +401,8 @@ def main() -> None:
     print('Autoforwarding:', ', '.join(env.AUTOFORWARD_COINS))
     if env.DRY_RUN:
         print('DRY RUN: transactions are built and signed but never broadcast. Set DRY_RUN=0 to forward.')
+        if env.PEGOUT_LIVE:
+            print('PEGOUT_LIVE: MWEB peg-outs to the LTC wallet ARE broadcast; forwards stay dry.')
 
     util.wait_for_rpc()
     util.wait_for_wallets()

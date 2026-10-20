@@ -61,6 +61,10 @@ def import_monero_seed():
 
 util.wait_for_rpc()
 
+# Any import that fails for a reason other than "already exists" makes this
+# exit non-zero, so a deploy waiting on it can tell.
+failed = []
+
 if 'btc' in env.AUTOFORWARD_COINS:
   try:
      import_bitcoin_seed()
@@ -73,6 +77,7 @@ if 'btc' in env.AUTOFORWARD_COINS:
      else:
         print(util.get_time(), 'Error importing bitcoin seed:')
         print(traceback.format_exc())
+        failed.append(True)
 
 
 if 'ltc' in env.AUTOFORWARD_COINS:
@@ -87,6 +92,7 @@ if 'ltc' in env.AUTOFORWARD_COINS:
      else:
         print(util.get_time(), 'Error importing litecoin seed:')
         print(traceback.format_exc())
+        failed.append(True)
 
 if 'ltc-mweb' in env.AUTOFORWARD_COINS:
   try:
@@ -100,14 +106,21 @@ if 'ltc-mweb' in env.AUTOFORWARD_COINS:
      else:
         print(util.get_time(), 'Error importing litecoin mimblewimble seed:')
         print(traceback.format_exc())
+        failed.append(True)
 
 if 'xmr' in env.AUTOFORWARD_COINS:
   try:
      import_monero_seed()
      print('Monero seed has successfully been imported!')
   except Exception as e:
-     if 'Remove the existing wallet first!' in e.__str__():
+     # 'No wallet dir configured': wallet-rpc was started with --wallet-file,
+     # i.e. the wallet exists and is open.
+     if any(m in e.__str__() for m in ('Wallet already exists', 'No wallet dir configured')):
         print('Monero wallet already exists. Skipping...')
      else:
         print(util.get_time(), 'Error importing monero seed:')
         print(traceback.format_exc())
+        failed.append(True)
+
+if failed:
+   raise SystemExit(f'{len(failed)} wallet import(s) failed; see above.')

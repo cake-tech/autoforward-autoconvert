@@ -190,7 +190,9 @@ def update_monero_receipts() -> None:
         # min_height is exclusive; re-reading the last block is harmless.
         params.update(filter_by_height=True, min_height=monero_receipts['height'] - 1)
 
-    transfers = util.request_monero_rpc('get_transfers', params, timeout=env.SEND_TIMEOUT).get('in', [])
+    # Only the first, full read of the history is slow; later ones are incremental.
+    timeout = env.HTTP_TIMEOUT if monero_receipts['height'] else env.SEND_TIMEOUT
+    transfers = util.request_monero_rpc('get_transfers', params, timeout=timeout).get('in', [])
 
     for transfer in transfers:
         monero_receipts['max_subaddress'] = max(monero_receipts['max_subaddress'], transfer['subaddr_index']['minor'])
@@ -372,6 +374,10 @@ def attempt_monero_autoforward():
     store_monero_wallet(force=True)
 
 def attempt_monero() -> None:
+    # A hung wallet-rpc would otherwise hold the whole loop for every call's
+    # timeout in turn (11 minutes a pass on btcpay-stg); fail the pass fast.
+    util.request_monero_rpc('get_height', timeout=env.PROBE_TIMEOUT)
+
     # Bookkeeping for monitoring only: never let it block the sweep.
     try:
         update_monero_receipts()

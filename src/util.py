@@ -14,7 +14,7 @@ from constants import MONERO_WALLET_FILENAME
 def get_time() -> str:
     return f'[{datetime.now().strftime("%Y-%m-%d %H:%M:%S")}]'
 
-def request_electrum_rpc(coin: Literal['btc', 'ltc', 'ltc-mweb'], method: str, params: list | dict = [], timeout: float | None = None):
+def request_electrum_rpc(coin: Literal['btc', 'ltc', 'ltc-mweb'], method: str, params: list | dict = [], timeout: float | None = None, _reloaded: bool = False):
     headers = {'content-type': 'application/json'}
 
     coin_to_auth = {
@@ -47,6 +47,15 @@ def request_electrum_rpc(coin: Literal['btc', 'ltc', 'ltc-mweb'], method: str, p
     response_json = response.json()
 
     if 'error' in response_json:
+        # A restarted Electrum daemon comes back without its wallet, and
+        # nothing else would load it until this program restarts. Load it and
+        # retry, once.
+        message = str((response_json.get('error') or {}).get('message', ''))
+        if 'wallet not loaded' in message and method != 'load_wallet' and not _reloaded:
+            print(get_time(), f'{ELECTRUM_COIN_NAMES[coin]} wallet not loaded (Electrum restarted?); loading it.')
+            request_electrum_rpc(coin, 'load_wallet', timeout=env.SEND_TIMEOUT, _reloaded=True)
+            ensure_gap_limit(coin)
+            return request_electrum_rpc(coin, method, params, timeout, _reloaded=True)
         raise Exception(response_json)
 
     response.raise_for_status()

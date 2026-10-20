@@ -27,6 +27,9 @@ AUTOCONVERT_ASSETS = _csv('AUTOCONVERT_ASSETS', 'XBT,LTC,XMR')
 # Seconds before an RPC or HTTP request is abandoned. Without one, a single
 # hung connection stalls every coin in the loop indefinitely.
 HTTP_TIMEOUT = float(os.getenv('HTTP_TIMEOUT', '60'))
+# A cheap first call that decides whether a backend answers at all, so a
+# hung one costs this much per pass rather than every call's full timeout.
+PROBE_TIMEOUT = float(os.getenv('PROBE_TIMEOUT', '15'))
 # Building and signing a sweep of many inputs is slow; give it longer.
 SEND_TIMEOUT = float(os.getenv('SEND_TIMEOUT', '600'))
 

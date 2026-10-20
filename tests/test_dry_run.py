@@ -19,6 +19,8 @@ import sys
 import unittest
 from unittest import mock
 
+import requests
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
 KRAKEN_SECRET = base64.b64encode(b'not-a-real-secret').decode()
@@ -221,6 +223,60 @@ class ForwardSelection(unittest.TestCase):
         self.assertFalse([1 for b, method, p in backends.sent if method.startswith('/0/private/DepositAddresses')])
         self.assertIn({'change': True, 'unused': True},
                       [p for b, method, p in backends.sent if method == 'listaddresses'])
+
+
+class BackendFailures(unittest.TestCase):
+    def test_electrum_restart_reloads_the_wallet(self):
+        # A restarted Electrum daemon answers 'wallet not loaded' until
+        # load_wallet; the coin must recover on its next pass by itself.
+        backends = Backends()
+        unloaded = {'loaded': False}
+        electrum = backends.electrum
+
+        def restarted(method, params):
+            if method == 'load_wallet':
+                unloaded['loaded'] = True
+                return True
+            if method == 'changegaplimit':
+                return True
+            if not unloaded['loaded']:
+                raise WalletNotLoaded()
+            return electrum(method, params)
+
+        def post(url, **kwargs):
+            try:
+                return backends_post(url, **kwargs)
+            except WalletNotLoaded:
+                return FakeResponse({'error': {'code': 1, 'message': 'wallet not loaded'}})
+
+        backends_post = backends.post
+        backends.electrum = restarted
+        with mock.patch('requests.post', post), mock.patch('requests.get', backends.get):
+            load('autoforward', dry_run=True, kraken_key=False).attempt_electrum_autoforward('btc')
+        self.assertIn('payto', [method for _, method, _ in backends.sent])
+
+    def test_hung_wallet_rpc_fails_the_pass_on_the_probe(self):
+        calls = []
+
+        def hung(url, timeout=None, **kwargs):
+            calls.append((json_method(kwargs), timeout))
+            raise requests.exceptions.ReadTimeout('paused')
+
+        with mock.patch('requests.post', hung):
+            module = load('autoforward', dry_run=True, kraken_key=False)
+            with self.assertRaises(requests.exceptions.ReadTimeout):
+                module.attempt_monero()
+        # One short probe, not a chain of 60 s and 600 s calls.
+        self.assertEqual(len(calls), 1)
+        self.assertLessEqual(calls[0][1], 15)
+
+
+class WalletNotLoaded(Exception):
+    pass
+
+
+def json_method(kwargs):
+    return (kwargs.get('json') or {}).get('method')
 
 
 class PegoutLive(unittest.TestCase):

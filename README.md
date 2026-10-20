@@ -35,6 +35,7 @@ Create a `.env` file as a copy of `.env.example` and set the values for the empt
 | `BITCOIN_FEE_RATE` | **No** | `halfHourFee` | The fee rate to use in the Bitcoin fee source API response. |
 | `LITECOIN_FEE_SOURCE` | **No** | `https://litecoinspace.org/api/v1/fees/recommended` | The fee API source to use for Litecoin transactions. |
 | `LITECOIN_FEE_RATE` | **No** | `halfHourFee` | The fee rate to use in the Litecoin fee source API response. |
+| `DRY_RUN` | **No** | `1` | **Defaults to on.** Everything a live pass does except moving funds: transactions are built and signed but not broadcast (Monero: `do_not_relay`), Kraken orders are sent with `validate=true`, and no new Kraken deposit address is created. Without a Kraken key, a dry run forwards to the wallet's own address. Set to `0` to forward and sell. Every status file reports `dry_run`. |
 | `AUTOFORWARD_COINS` | **No** | `btc,ltc,ltc-mweb,xmr` | Comma-separated wallets to autoforward. A coin left out is not waited for at startup, not imported by the seed importer and never swept. |
 | `AUTOCONVERT_ASSETS` | **No** | `XBT,LTC,XMR` | Comma-separated Kraken asset altnames that autoconvert sells (e.g. add `ZEC`). |
 | `MIN_BITCOIN_SEND_AMOUNT` | **No** | `0.0001` | Minimum confirmed BTC balance before forwarding (batching threshold). |

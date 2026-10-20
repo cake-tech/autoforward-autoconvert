@@ -20,6 +20,8 @@ jobs:
       - name: Byte-compile
         run: python -m py_compile src/*.py
       - name: Pyflakes
-        run: pip install pyflakes==3.2.0 && pyflakes src/
+        run: pip install pyflakes==3.2.0 && pyflakes src/ tests/
+      - name: Tests
+        run: pip install requests==2.32.3 && python -m unittest discover -s tests -v
       - name: Compose config
         run: cp .env.example .env && docker compose config --quiet

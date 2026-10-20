@@ -41,7 +41,7 @@ def write(program: str) -> None:
     if not env.STATUS_DIR:
         return
 
-    document = {'program': program, 'updated': int(time.time()), 'sections': _sections}
+    document = {'program': program, 'updated': int(time.time()), 'dry_run': env.DRY_RUN, 'sections': _sections}
 
     try:
         fd, tmp = tempfile.mkstemp(dir=env.STATUS_DIR, prefix=f'.{program}.')

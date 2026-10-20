@@ -71,6 +71,7 @@ services:
       - PYTHONUNBUFFERED=1
       - TESTNET=${TESTNET}
       - AUTOFORWARD_COINS=${AUTOFORWARD_COINS:-btc,ltc,ltc-mweb,xmr}
+      - DRY_RUN=${DRY_RUN:-1}
       - BITCOIN_ELECTRUM_RPC_URL=http://btc-electrum:7000
       - LITECOIN_ELECTRUM_RPC_URL=http://ltc-electrum:7000
       - LITECOIN_MWEB_ELECTRUM_RPC_URL=http://ltc-mweb-electrum:7000
@@ -102,6 +103,7 @@ services:
       - PYTHONUNBUFFERED=1
       - TESTNET=${TESTNET}
       - AUTOFORWARD_COINS=${AUTOFORWARD_COINS:-btc,ltc,ltc-mweb,xmr}
+      - DRY_RUN=${DRY_RUN:-1}
       - BITCOIN_ELECTRUM_RPC_URL=http://btc-electrum:7000
       - LITECOIN_ELECTRUM_RPC_URL=http://ltc-electrum:7000
       - LITECOIN_MWEB_ELECTRUM_RPC_URL=http://ltc-mweb-electrum:7000
@@ -140,6 +142,7 @@ services:
       - PYTHONUNBUFFERED=1
       - TESTNET=${TESTNET}
       - AUTOFORWARD_COINS=${AUTOFORWARD_COINS:-btc,ltc,ltc-mweb,xmr}
+      - DRY_RUN=${DRY_RUN:-1}
       - KRAKEN_API_KEY=${KRAKEN_API_KEY}
       - KRAKEN_API_SECRET=${KRAKEN_API_SECRET}
       - SETTLEMENT_CURRENCY=${SETTLEMENT_CURRENCY}

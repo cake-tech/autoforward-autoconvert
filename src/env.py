@@ -7,6 +7,13 @@ def _csv(name: str, default: str) -> list[str]:
 
 TESTNET = os.getenv('TESTNET', '0')
 
+# Everything a live pass does - balances, fee checks, building and signing
+# the transaction, Kraken lookups and order validation - except the parts
+# that move funds: nothing is broadcast, Monero sweeps are built with
+# do_not_relay, Kraken orders are sent with validate=true, and no new Kraken
+# deposit address is created. Off only when explicitly "0".
+DRY_RUN = os.getenv('DRY_RUN', '1') != '0'
+
 # Which wallets autoforward sweeps, and which Kraken assets autoconvert sells.
 # A coin left out is neither waited for at startup nor touched in the loop.
 AUTOFORWARD_COINS = _csv('AUTOFORWARD_COINS', 'btc,ltc,ltc-mweb,xmr')

@@ -110,16 +110,18 @@ def get_monero_balance() -> float:
     return util.request_monero_rpc('get_balance', params)['unlocked_balance'] / 1000000000000
 
 def get_monero_unused_address() -> str:
-    return util.request_monero_rpc('get_address', {'account_index': 0})
+    return util.request_monero_rpc('get_address', {'account_index': 0})['address']
 
-def sweep_all_monero(address: str) -> None:
+def sweep_all_monero(address: str) -> dict:
     params = {
         'account_index': 0,
         'address': address,
-        'subaddr_indices_all': True  # Without this, it sends from each subaddress separately
+        'subaddr_indices_all': True,  # Without this, it sends from each subaddress separately
+        # Built and signed, never relayed or recorded as spent.
+        'do_not_relay': env.DRY_RUN
     }
 
-    util.request_monero_rpc('sweep_all', params, timeout=env.SEND_TIMEOUT)
+    return util.request_monero_rpc('sweep_all', params, timeout=env.SEND_TIMEOUT)
 
 monero_receipts = {'height': 0, 'max_subaddress': -1, 'last_received_at': 0}
 
@@ -156,6 +158,16 @@ def store_monero_wallet(force: bool = False) -> None:
         util.request_monero_rpc('store', timeout=env.SEND_TIMEOUT)
         last_monero_store = time()
 
+def get_destination_address(coin: ElectrumCoin | Literal['xmr']) -> str:
+    # Testnet, or a dry run with no Kraken key: the wallet's own address,
+    # since nothing is sent anyway.
+    if env.TESTNET == '1' or (env.DRY_RUN and not env.KRAKEN_API_KEY):
+        if coin == 'xmr':
+            return get_monero_unused_address()
+        return get_electrum_unused_address(coin)
+
+    return get_new_kraken_address('ltc' if coin == 'ltc-mweb' else coin)
+
 def get_new_kraken_address(asset: Literal['btc', 'ltc', 'xmr']) -> str:
     sym_to_name = {
         "btc": "Bitcoin",
@@ -173,6 +185,10 @@ def get_new_kraken_address(asset: Literal['btc', 'ltc', 'xmr']) -> str:
     first_new_address = next((addr for addr in result if addr.get('new', False)), None)
     if first_new_address:
         return first_new_address['address']
+    elif env.DRY_RUN and result:
+        # Creating addresses is a write on the Kraken account; a dry run
+        # reuses an existing one.
+        return result[0]['address']
     else:
         payload['new'] = True
         result = util.kraken_request('/0/private/DepositAddresses', payload)
@@ -211,10 +227,7 @@ def attempt_electrum_autoforward(coin: ElectrumCoin):
     except:
         set_electrum_fee_rate(coin, dynamic=True)
 
-    if env.TESTNET == '1':
-        address = get_electrum_unused_address(coin)
-    else:
-        address = get_new_kraken_address(coin if coin != 'ltc-mweb' else 'ltc')
+    address = get_destination_address(coin)
 
     # Electrum-ltc doesn't support deserializing mweb transactions, so we can't check total fee
     if coin != 'ltc-mweb':
@@ -239,7 +252,13 @@ def attempt_electrum_autoforward(coin: ElectrumCoin):
 
         signed_tx = sign_psbt(coin, psbt)
     else:
+        total_fee = None
         signed_tx = create_psbt(coin, address, unsigned=False)
+
+    if env.DRY_RUN:
+        status.set(coin, last_dry_run_at=int(time()), last_dry_run_amount=balance, last_dry_run_fee=total_fee)
+        print(util.get_time(), f'DRY RUN: built and signed a {balance} {coin_upper} forward to {address} (fee {total_fee}); not broadcast.')
+        return
 
     try:
         broadcast_electrum_tx(coin, signed_tx)
@@ -267,12 +286,16 @@ def attempt_monero_autoforward():
         print(util.get_time(), f'Not enough XMR balance to autoforward. (Balance: {balance}, Min Send: {min_send})')
         return
 
-    if env.TESTNET == '1':
-        address = get_monero_unused_address()
-    else:
-        address = get_new_kraken_address('xmr')
+    address = get_destination_address('xmr')
+    result = sweep_all_monero(address)
 
-    sweep_all_monero(address)
+    if env.DRY_RUN:
+        fee = sum(result.get('fee_list', [])) / 1000000000000
+        status.set('xmr', last_dry_run_at=int(time()), last_dry_run_amount=balance, last_dry_run_fee=fee,
+                   last_dry_run_txs=len(result.get('tx_hash_list', [])))
+        print(util.get_time(), f'DRY RUN: built a {balance} XMR sweep to {address} in {len(result.get("tx_hash_list", []))} tx(s) (fee {fee}); not relayed.')
+        return
+
     status.set('xmr', last_forward_at=int(time()), last_forward_amount=balance)
     print(util.get_time(), f'Autoforwarded {balance} XMR to {address}!')
     store_monero_wallet(force=True)
@@ -297,28 +320,34 @@ attempts = {
     'xmr': ('Monero', attempt_monero),
 }
 
-unknown = [coin for coin in env.AUTOFORWARD_COINS if coin not in attempts]
-if unknown:
-    raise SystemExit(f'Unknown AUTOFORWARD_COINS entries: {unknown}')
+def main() -> None:
+    unknown = [coin for coin in env.AUTOFORWARD_COINS if coin not in attempts]
+    if unknown:
+        raise SystemExit(f'Unknown AUTOFORWARD_COINS entries: {unknown}')
 
-print('Autoforwarding:', ', '.join(env.AUTOFORWARD_COINS))
+    print('Autoforwarding:', ', '.join(env.AUTOFORWARD_COINS))
+    if env.DRY_RUN:
+        print('DRY RUN: transactions are built and signed but never broadcast. Set DRY_RUN=0 to forward.')
 
-util.wait_for_rpc()
-util.wait_for_wallets()
+    util.wait_for_rpc()
+    util.wait_for_wallets()
 
-while 1:
-    for coin in env.AUTOFORWARD_COINS:
-        name, attempt = attempts[coin]
+    while 1:
+        for coin in env.AUTOFORWARD_COINS:
+            name, attempt = attempts[coin]
 
-        try:
-            attempt()
-            status.ok(coin)
-        except Exception as e:
-            status.error(coin, e)
-            print(util.get_time(), f'Error autoforwarding {name}:')
-            print(traceback.format_exc())
+            try:
+                attempt()
+                status.ok(coin)
+            except Exception as e:
+                status.error(coin, e)
+                print(util.get_time(), f'Error autoforwarding {name}:')
+                print(traceback.format_exc())
 
-    status.write('autoforward')
+        status.write('autoforward')
 
-    delay = random.randint(270, 330)
-    sleep(delay)
+        delay = random.randint(270, 330)
+        sleep(delay)
+
+if __name__ == '__main__':
+    main()

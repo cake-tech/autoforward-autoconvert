@@ -56,6 +56,12 @@ def prepare_and_make_trade(balance, quote_currency, base_currency, payload):
         limit_price = mid_market_price * (1-env.MAX_SLIPPAGE_PERCENT/100) # Example 212.365*(1-0.5/100) = 211.303175
         limit_price = round(limit_price, trade_decimals)  # Example 211.303175 -> 211.30
         payload['price'] = limit_price
+        if env.DRY_RUN:
+            # Kraken checks the order (pair, volume, price, funds) and places nothing.
+            payload['validate'] = True
+            util.kraken_request('/0/private/AddOrder', payload)
+            print(util.get_time(), f'DRY RUN: Kraken validated selling {balance} for pair {payload["pair"]} at limit {limit_price}; not placed.')
+            return False
         util.kraken_request('/0/private/AddOrder', payload)
         print(util.get_time(), f'Selling up to {balance} {quote_currency if payload["type"] == "sell" else base_currency} for pair {payload['pair']} for limit price {limit_price}')
         return True
@@ -125,7 +131,15 @@ if __name__ == '__main__':
         print('Testnet mode enabled. Autoconvert will now sleep forever. Zz Zz Zz...')
         time.sleep(999999999)
 
+    if not env.KRAKEN_API_KEY:
+        print('No Kraken API key configured. Autoconvert will now sleep forever.')
+        status.set('kraken', disabled='no API key')
+        status.write('autoconvert')
+        time.sleep(999999999)
+
     print('Autoconverting:', ', '.join(env.AUTOCONVERT_ASSETS), '->', env.SETTLEMENT_CURRENCY)
+    if env.DRY_RUN:
+        print('DRY RUN: orders are validated by Kraken but never placed. Set DRY_RUN=0 to sell.')
 
     while 1:
         # First, get the settlement currency formatted correctly

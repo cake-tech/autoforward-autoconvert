@@ -325,7 +325,8 @@ def attempt_electrum_autoforward(coin: ElectrumCoin):
 
     if env.DRY_RUN and not (coin == 'ltc-mweb' and env.PEGOUT_LIVE):
         status.set(coin, last_dry_run_at=int(time()), last_dry_run_amount=balance, last_dry_run_fee=total_fee)
-        print(util.get_time(), f'DRY RUN: built and signed a {balance} {coin_upper} forward to {address} (fee {total_fee}); not broadcast.')
+        what = f'peg-out of {balance} LTC from MWEB' if coin == 'ltc-mweb' else f'{balance} {coin_upper} forward'
+        print(util.get_time(), f'DRY RUN: built and signed a {what} to {address} (fee {total_fee}); not broadcast.')
         return
 
     try:

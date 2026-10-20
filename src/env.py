@@ -83,6 +83,14 @@ MONERO_WALLET_PASSWORD = os.getenv('MONERO_WALLET_PASSWORD', '')
 MONERO_WALLET_HEIGHT = os.getenv('MONERO_WALLET_HEIGHT', '')
 MONERO_DAEMON_ADDRESS = os.getenv('MONERO_DAEMON_ADDRESS', '')
 
+# Zcash: a zecd wallet daemon (bitcoind-dialect JSON-RPC; its credentials are
+# spend authority) and its unauthenticated health port, whose /readyz says
+# whether the wallet has scanned to the tip.
+ZCASH_RPC_URL = os.getenv('ZCASH_RPC_URL', '')
+ZCASH_RPC_USERNAME = os.getenv('ZCASH_RPC_USERNAME', 'zec')
+ZCASH_RPC_PASSWORD = os.getenv('ZCASH_RPC_PASSWORD', '')
+ZCASH_HEALTH_URL = os.getenv('ZCASH_HEALTH_URL', '')
+
 KRAKEN_API_KEY = os.getenv('KRAKEN_API_KEY', '')
 KRAKEN_API_SECRET = os.getenv('KRAKEN_API_SECRET', '')
 

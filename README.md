@@ -38,6 +38,11 @@ Create a `.env` file as a copy of `.env.example` and set the values for the empt
 | `DRY_RUN` | **No** | `1` | **Defaults to on.** Everything a live pass does except moving funds: transactions are built and signed but not broadcast (Monero: `do_not_relay`), Kraken orders are sent with `validate=true`, and no new Kraken deposit address is created. Without a Kraken key, a dry run forwards to the wallet's own address. Set to `0` to forward and sell. Every status file reports `dry_run`. |
 | `PEGOUT_LIVE` | **No** | `0` | In a dry run, still broadcast MWEB peg-outs. They only move coins between the operator's own wallets (MWEB to an LTC change address), so a test bed can exercise the real peg-out and the LTC pass after it while forwards stay dry. |
 | `AUTOFORWARD_COINS` | **No** | `btc,ltc,ltc-mweb,xmr` | Comma-separated wallets to autoforward. A coin left out is not waited for at startup, not imported by the seed importer and never swept. |
+| `ZCASH_WALLET_SEED` | For `zec` | - | BIP39 mnemonic of the Zcash wallet. Passed only to the one-shot `zcash-wallet-init` restore, never to the running wallet. |
+| `ZCASH_BIRTH_HEIGHT` | For `zec` | - | Restore height: at or before the wallet's first receive. |
+| `ZCASH_RPC_PASSWORD` | For `zec` | - | zecd RPC password. **Spend authority** over the wallet; the RPC is reachable on the Compose network only. |
+| `MIN_ZCASH_SEND_AMOUNT` | **No** | `0.01` | Minimum spendable ZEC before sweeping. |
+| `ZECD_VERSION` | **No** | `0.8.2` | `ghcr.io/zecrocks/zecd` tag. |
 | `AUTOCONVERT_ASSETS` | **No** | `XBT,LTC,XMR` | Comma-separated Kraken asset altnames that autoconvert sells (e.g. add `ZEC`). |
 | `MIN_BITCOIN_SEND_AMOUNT` | **No** | `0.0001` | Minimum confirmed BTC balance before forwarding (batching threshold). |
 | `MIN_LITECOIN_SEND_AMOUNT` | **No** | `0.05` | Minimum confirmed LTC balance before forwarding; applies to LTC and LTC-MWEB. |
@@ -61,6 +66,26 @@ After setting the required environment variable values, you can run the containe
 ```bash
 $ docker-compose --env-file .env up -d
 ```
+
+## Zcash
+
+`zec` (opt-in via `AUTOFORWARD_COINS`) forwards with [zecd](https://github.com/zecrocks/zecd), a Zcash wallet daemon (Ironwood-capable, bitcoind-dialect JSON-RPC), against the lightwalletd in `docker/zcash-wallet/zecd.toml`. Restore the wallet once, then start the stack:
+
+```bash
+docker compose --profile zcash-init run --rm zcash-wallet-init
+```
+
+Each pass:
+- requires zecd's `/readyz`, so it never sweeps a wallet that is still scanning;
+- reads the spendable balance;
+- validates a Kraken `Zcash (Transparent)` deposit address;
+- sweeps each pool with `z_mergetoaddress` (`ANY_ORCHARD`, which covers Orchard and Ironwood, then `ANY_SAPLING`), using `AllowRevealedRecipients`.
+
+`z_mergetoaddress` pays the inputs minus the ZIP-317 fee to one output, so there is no amount to guess and no change. Its note limits batch a large backlog across passes.
+
+**Dry run:** zecd cannot build a send without broadcasting it, so a ZEC dry run stops after the readiness, balance and address checks.
+
+**Privacy:** receiving stays shielded. The payout to Kraken's t-address reveals the amount and the recipient.
 
 ## Monitoring
 

@@ -1,0 +1,39 @@
+# zecd (https://github.com/zecrocks/zecd) for the Zcash autoforwarder. The RPC
+# credentials are spend authority: the RPC binds 0.0.0.0 *inside its container*
+# only so autoforward can reach it over the Compose network; never publish 8232.
+network = "main"
+datadir = "/var/lib/zecd"
+default_wallet = "default"
+
+[backend]
+# Any lightwalletd >= 0.5.0 (Ironwood), or zebra://host:port for a full node.
+server = "https://zec-node.cakewallet.com:443"
+
+[rpc]
+bind = "0.0.0.0"
+port = 8232
+user = "zec"
+# password: ZECD_RPC_PASSWORD (never in this file)
+
+[keys]
+# Unattended sweeps need the seed resident (auto_unlock), as for every other
+# hot wallet in this stack; keys.toml + identity.txt live in the volume.
+age_identity = "/var/lib/zecd/identity.txt"
+auto_unlock = true
+bootstrap_from_keys = true
+
+[pools]
+# Receive on both; Orchard also covers Ironwood. Spending draws on every pool.
+enabled = ["sapling", "orchard"]
+
+[sync]
+# Deposits need no memos: reach readiness as soon as the scan is at the tip.
+fetch_memos = false
+
+[health]
+# /readyz is 200 only once scanned to within max_scan_lag of the tip, which
+# autoforward checks before every Zcash pass.
+enabled = true
+bind = "0.0.0.0"
+port = 9233
+readiness = "synced"

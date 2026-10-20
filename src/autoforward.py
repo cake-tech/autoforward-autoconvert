@@ -6,7 +6,7 @@ import traceback
 import requests
 import json
 
-from constants import MIN_BITCOIN_SEND_AMOUNT_MAINNET, MIN_BITCOIN_SEND_AMOUNT_TESTNET, MIN_LITECOIN_SEND_AMOUNT_MAINNET, MIN_LITECOIN_SEND_AMOUNT_TESTNET, MIN_MONERO_SEND_AMOUNT_MAINNET, MIN_MONERO_SEND_AMOUNT_TESTNET
+from constants import MIN_BITCOIN_SEND_AMOUNT_MAINNET, MIN_BITCOIN_SEND_AMOUNT_TESTNET, MIN_LITECOIN_SEND_AMOUNT_MAINNET, MIN_LITECOIN_SEND_AMOUNT_TESTNET, MIN_MONERO_SEND_AMOUNT_MAINNET, MIN_MONERO_SEND_AMOUNT_TESTNET, MIN_ZCASH_SEND_AMOUNT_MAINNET, MIN_ZCASH_SEND_AMOUNT_TESTNET
 import util
 import env
 import status
@@ -213,21 +213,25 @@ def store_monero_wallet(force: bool = False) -> None:
         util.request_monero_rpc('store', timeout=env.SEND_TIMEOUT)
         last_monero_store = time()
 
-def get_destination_address(coin: ElectrumCoin | Literal['xmr']) -> str:
+def get_destination_address(coin: ElectrumCoin | Literal['xmr', 'zec']) -> str:
     # Testnet, or a dry run with no Kraken key: the wallet's own address,
     # since nothing is sent anyway.
     if env.TESTNET == '1' or (env.DRY_RUN and not env.KRAKEN_API_KEY):
         if coin == 'xmr':
             return get_monero_unused_address()
+        if coin == 'zec':
+            return util.request_zcash_rpc('getnewaddress')
         return get_electrum_unused_address(coin)
 
     return get_new_kraken_address(coin)
 
-def get_new_kraken_address(asset: Literal['btc', 'ltc', 'xmr']) -> str:
+def get_new_kraken_address(asset: Literal['btc', 'ltc', 'xmr', 'zec']) -> str:
     sym_to_name = {
         "btc": "Bitcoin",
         "ltc": "Litecoin",
-        "xmr": "Monero"
+        "xmr": "Monero",
+        # Kraken's only ZEC deposit method: a t-address.
+        "zec": "Zcash (Transparent)"
     }
 
     payload: dict[str, str | bool] = {
@@ -374,6 +378,68 @@ def attempt_monero_autoforward():
     print(util.get_time(), f'Autoforwarded {balance} XMR to {address}!')
     store_monero_wallet(force=True)
 
+# Each sweep spends one source family: zecd never mixes pools in one transaction.
+# ANY_ORCHARD covers Orchard and Ironwood (Ironwood notes sit behind the Orchard receiver).
+ZCASH_SOURCES = ('ANY_ORCHARD', 'ANY_SAPLING')
+
+def attempt_zcash_autoforward() -> None:
+    util.require_zcash_ready()
+
+    balances = util.request_zcash_rpc('getbalances')['mine']
+    balance = float(balances['trusted'])  # spendable under zecd's confirmation policy
+    min_send = MIN_ZCASH_SEND_AMOUNT_TESTNET if env.TESTNET == '1' else MIN_ZCASH_SEND_AMOUNT_MAINNET
+    status.set('zec', balance=balance, pending=float(balances['untrusted_pending']), min_send=min_send)
+
+    if balance < min_send:
+        print(util.get_time(), f'Not enough ZEC balance to autoforward. (Balance: {balance}, Min. send: {min_send})')
+        return
+
+    address = get_destination_address('zec')
+    if not util.request_zcash_rpc('z_validateaddress', [address]).get('isvalid'):
+        raise Exception(f'zecd rejects the destination address {address}')
+
+    if env.DRY_RUN:
+        # zecd has no build-without-broadcasting call, so a ZEC dry run stops here: the
+        # wallet is synced, the balance is known, the Kraken address is valid.
+        status.set('zec', last_dry_run_at=int(time()), last_dry_run_amount=balance, last_dry_run_fee=None)
+        print(util.get_time(), f'DRY RUN: would sweep {balance} ZEC to {address} (zecd cannot build a send without broadcasting it); not sent.')
+        return
+
+    forwarded, txids = 0.0, []
+    for source in ZCASH_SOURCES:
+        try:
+            # z_mergetoaddress pays inputs - ZIP-317 fee to one output: a real sweep, no
+            # amount to guess and no change left behind. Its note limits batch a large
+            # backlog across passes; AllowRevealedRecipients permits the t-address payout.
+            plan = util.request_zcash_rpc('z_mergetoaddress', [[source], address, None, None, None, None, 'AllowRevealedRecipients'],
+                                          timeout=env.SEND_TIMEOUT)
+        except Exception as e:
+            if 'Could not find any funds to merge' in str(e):
+                continue
+            raise
+
+        # zecd clamps each wait, so wait in slices until the operation finishes or our own
+        # budget runs out.
+        deadline = time() + env.SEND_TIMEOUT
+        while 1:
+            operation = util.request_zcash_rpc('z_waitforoperation', [plan['opid'], 60], timeout=90)
+            if operation.get('finished') or time() >= deadline:
+                break
+        if not operation.get('finished'):
+            # Still proving or broadcasting inside zecd; its notes stay locked, so the next
+            # pass will not double-spend them.
+            raise Exception(f'Zcash sweep {plan["opid"]} from {source} still running after {env.SEND_TIMEOUT}s')
+        if operation.get('status') != 'success':
+            raise Exception(f'Zcash sweep from {source} {operation.get("status")}: {operation.get("error")}')
+
+        forwarded += float(plan['mergingShieldedValue'])
+        txids.append(operation['result']['txid'])
+        status.set('zec', notes_left_for_later=plan['remainingNotes'])
+
+    if txids:
+        status.set('zec', last_forward_at=int(time()), last_forward_amount=forwarded, last_forward_txids=txids)
+        print(util.get_time(), f'Autoforwarded {forwarded} ZEC to {address}! ({", ".join(txids)})')
+
 def attempt_monero() -> None:
     # A hung wallet-rpc would otherwise hold the whole loop for every call's
     # timeout in turn (11 minutes a pass on btcpay-stg); fail the pass fast.
@@ -396,6 +462,7 @@ attempts = {
     'ltc': ('Litecoin', lambda: attempt_electrum_autoforward('ltc')),
     'ltc-mweb': ('Litecoin MWEB', lambda: attempt_electrum_autoforward('ltc-mweb')),
     'xmr': ('Monero', attempt_monero),
+    'zec': ('Zcash', attempt_zcash_autoforward),
 }
 
 def main() -> None:

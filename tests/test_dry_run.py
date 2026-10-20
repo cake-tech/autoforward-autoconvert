@@ -29,9 +29,10 @@ KRAKEN_SECRET = base64.b64encode(b'not-a-real-secret').decode()
 
 
 class FakeResponse:
-    def __init__(self, payload):
+    def __init__(self, payload, status_code=200):
         self._payload = payload
         self.text = json.dumps(payload)
+        self.status_code = status_code
 
     def json(self):
         return self._payload
@@ -43,8 +44,10 @@ class FakeResponse:
 class Backends:
     """Canned answers for exactly the calls the forward/sale paths make."""
 
-    def __init__(self, utxos=None, tip=1000):
+    def __init__(self, utxos=None, tip=1000, zcash_ready=True, zcash_empty_pools=()):
         self.sent = []
+        self.zcash_ready = zcash_ready
+        self.zcash_empty_pools = zcash_empty_pools
         # One mature output by default; tests of selection pass their own.
         self.utxos = utxos if utxos is not None else [utxo('aa', 0, '1.5', tip - 100)]
         self.tip = tip
@@ -60,6 +63,12 @@ class Backends:
                 return FakeResponse({'error': [str(e)]})
 
         body = json if json is not None else __import__('json').loads(data)
+        if 'zcash-wallet' in url:
+            self.sent.append(('zcash', body['method'], body['params']))
+            result = self.zcash(body['method'], body['params'])
+            if isinstance(result, dict) and 'error' in result and len(result) == 1:
+                return FakeResponse({'result': None, 'error': result['error']}, status_code=500)
+            return FakeResponse({'result': result, 'error': None})
         if 'json_rpc' in url:
             self.sent.append(('monero', body['method'], body['params']))
             return FakeResponse({'result': self.monero(body['method'], body['params'])})
@@ -68,7 +77,24 @@ class Backends:
         return FakeResponse({'result': self.electrum(body['method'], body['params'])})
 
     def get(self, url, timeout=None):
+        if url.endswith('/readyz'):
+            self.sent.append(('zcash-health', 'readyz', {}))
+            if self.zcash_ready:
+                return FakeResponse({'ready': True})
+            return FakeResponse({'ready': False, 'reason': 'syncing'}, status_code=503)
         return FakeResponse({'halfHourFee': 5})
+
+    def zcash(self, method, params):
+        if method == 'z_mergetoaddress' and params[0][0] in self.zcash_empty_pools:
+            return {'error': {'code': -6, 'message': 'Could not find any funds to merge.'}}
+        return {
+            'getblockchaininfo': {'blocks': 1},
+            'getbalances': {'mine': {'trusted': 1.5, 'untrusted_pending': 0, 'immature': 0}},
+            'getnewaddress': 'u1ownaddress',
+            'z_validateaddress': {'isvalid': True},
+            'z_mergetoaddress': {'opid': 'opid-1', 'mergingShieldedValue': 0.75, 'remainingNotes': 0},
+            'z_waitforoperation': {'finished': True, 'status': 'success', 'result': {'txid': 'zectx'}},
+        }[method]
 
     def electrum(self, method, params):
         return {
@@ -152,6 +178,8 @@ class Backends:
             if backend == 'monero' and method in ('sweep_all', 'transfer', 'relay_tx') \
                     and not params.get('do_not_relay'):
                 moved.append(f'monero {method}')
+            if backend == 'zcash' and method in ('z_mergetoaddress', 'z_sendmany', 'sendtoaddress', 'sendmany'):
+                moved.append(f'zcash {method}')
             if backend == 'kraken' and method == '/0/private/AddOrder' and not params.get('validate'):
                 moved.append('kraken AddOrder')
             if backend == 'kraken' and method == '/0/private/DepositAddresses' and params.get('new'):
@@ -173,6 +201,8 @@ def load(module, dry_run, kraken_key, **extra_env):
         'MONERO_RPC_URL': 'http://monero-wallet-rpc:18082/json_rpc',
         'BITCOIN_ELECTRUM_RPC_URL': 'http://btc-electrum:7000',
         'LITECOIN_MWEB_ELECTRUM_RPC_URL': 'http://ltc-mweb-electrum:7000',
+        'ZCASH_RPC_URL': 'http://zcash-wallet:8232/',
+        'ZCASH_HEALTH_URL': 'http://zcash-wallet:9233',
         **extra_env,
     }
     with mock.patch.dict(os.environ, environment):
@@ -188,6 +218,8 @@ def forward(coin):
     def run(module, _backends):
         if coin == 'xmr':
             module.attempt_monero()
+        elif coin == 'zec':
+            module.attempt_zcash_autoforward()
         else:
             module.attempt_electrum_autoforward(coin)
     return run
@@ -214,6 +246,8 @@ SCENARIOS = [
     ('ltc to Kraken', 'autoforward', True, forward('ltc')),
     ('xmr to own address', 'autoforward', False, forward('xmr')),
     ('xmr to Kraken', 'autoforward', True, forward('xmr')),
+    ('zec to own address', 'autoforward', False, forward('zec')),
+    ('zec to Kraken', 'autoforward', True, forward('zec')),
     ('sell xmr on Kraken', 'autoconvert', True, sell('XMR')),
     ('sell zec on Kraken via USD', 'autoconvert', True, sell('ZEC')),
 ]
@@ -360,6 +394,27 @@ class IndirectSale(unittest.TestCase):
         _, output = self.sell_zec(dry_run=True)
         self.assertIn('USDTUSD', output)
         self.assertNotRegex(output.lower(), r'error|exception|traceback|failed')
+
+
+class ZcashSweep(unittest.TestCase):
+    def run_live(self, backends):
+        with mock.patch('requests.post', backends.post), mock.patch('requests.get', backends.get):
+            load('autoforward', dry_run=False, kraken_key=True).attempt_zcash_autoforward()
+        return [params for backend, method, params in backends.sent if method == 'z_mergetoaddress']
+
+    def test_never_sweeps_a_wallet_that_is_not_ready(self):
+        # A wallet still scanning reports a partial balance.
+        backends = Backends(zcash_ready=False)
+        with self.assertRaises(Exception):
+            self.run_live(backends)
+        self.assertEqual([m for b, m, p in backends.sent if b == 'zcash'], [])
+
+    def test_sweeps_each_pool_to_the_kraken_t_address_and_skips_an_empty_one(self):
+        merges = self.run_live(Backends(zcash_empty_pools=('ANY_SAPLING',)))
+        self.assertEqual([m[0] for m in merges], [['ANY_ORCHARD'], ['ANY_SAPLING']])
+        for m in merges:
+            self.assertEqual(m[1], 't1krakenaddress')
+            self.assertEqual(m[6], 'AllowRevealedRecipients')
 
 
 class PegoutLive(unittest.TestCase):

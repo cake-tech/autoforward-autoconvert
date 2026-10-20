@@ -67,6 +67,32 @@ services:
       - --daemon-address=${MONERO_DAEMON_ADDRESS}
       - --wallet-dir=/home/monero/wallet
 
+  # Zcash wallet (zecd, distroless: no shell). Opt-in: add zec to AUTOFORWARD_COINS
+  # and restore the wallet once with:
+  #   docker compose --profile zcash-init run --rm zcash-wallet-init
+  zcash-wallet:
+    image: ghcr.io/zecrocks/zecd:${ZECD_VERSION:-0.8.2}
+    container_name: zcash-wallet
+    restart: unless-stopped
+    command: ["run", "--conf", "/etc/zecd/zecd.toml"]
+    environment:
+      - ZECD_RPC_PASSWORD=${ZCASH_RPC_PASSWORD}
+    volumes:
+      - zcash-wallet-data:/var/lib/zecd
+      - ./docker/zcash-wallet/zecd.toml:/etc/zecd/zecd.toml:ro
+
+  # One-shot restore from the seed; the only container that ever sees it.
+  zcash-wallet-init:
+    image: ghcr.io/zecrocks/zecd:${ZECD_VERSION:-0.8.2}
+    profiles: ["zcash-init"]
+    command: ["init", "--restore", "--birthday", "${ZCASH_BIRTH_HEIGHT}", "--conf", "/etc/zecd/zecd.toml"]
+    environment:
+      - ZECD_MNEMONIC=${ZCASH_WALLET_SEED}
+      - ZECD_RPC_PASSWORD=${ZCASH_RPC_PASSWORD}
+    volumes:
+      - zcash-wallet-data:/var/lib/zecd
+      - ./docker/zcash-wallet/zecd.toml:/etc/zecd/zecd.toml:ro
+
   seed-importer:
     build:
       context: .
@@ -127,6 +153,10 @@ services:
       - MIN_BITCOIN_SEND_AMOUNT=${MIN_BITCOIN_SEND_AMOUNT:-0.0001}
       - MIN_LITECOIN_SEND_AMOUNT=${MIN_LITECOIN_SEND_AMOUNT:-0.05}
       - MIN_MONERO_SEND_AMOUNT=${MIN_MONERO_SEND_AMOUNT:-0.03}
+      - MIN_ZCASH_SEND_AMOUNT=${MIN_ZCASH_SEND_AMOUNT:-0.01}
+      - ZCASH_RPC_URL=http://zcash-wallet:8232/
+      - ZCASH_HEALTH_URL=http://zcash-wallet:9233
+      - ZCASH_RPC_PASSWORD=${ZCASH_RPC_PASSWORD}
       - MAX_NETWORK_FEE_PERCENT=${MAX_NETWORK_FEE_PERCENT:-5}
       - BITCOIN_FEE_SOURCE=${BITCOIN_FEE_SOURCE:-https://mempool.space/api/v1/fees/recommended}
       - BITCOIN_FEE_RATE=${BITCOIN_FEE_RATE:-halfHourFee}
@@ -166,6 +196,7 @@ services:
       - seed-importer
 
 volumes:
+  zcash-wallet-data:
   bitcoin-data:
   litecoin-data:
   litecoin-mweb-data:

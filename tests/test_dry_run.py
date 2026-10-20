@@ -250,6 +250,9 @@ SCENARIOS = [
     ('zec to Kraken', 'autoforward', True, forward('zec')),
     ('sell xmr on Kraken', 'autoconvert', True, sell('XMR')),
     ('sell zec on Kraken via USD', 'autoconvert', True, sell('ZEC')),
+    # USD in AUTOCONVERT_ASSETS sweeps the residue those sales leave: a
+    # direct route on which the settlement currency is bought, not sold.
+    ('sweep usd residue to USDT', 'autoconvert', True, sell('USD', '10.5')),
 ]
 
 

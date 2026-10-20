@@ -49,51 +49,65 @@ def import_monero_seed():
 
    util.request_monero_rpc('restore_deterministic_wallet', params)
 
+   # Persisted in the keys file by the RPC, so this is needed only once.
+   if env.MONERO_SUBADDRESS_LOOKAHEAD:
+      major, minor = (int(n) for n in env.MONERO_SUBADDRESS_LOOKAHEAD.split(':'))
+      util.request_monero_rpc('set_subaddress_lookahead', {
+         'major_idx': major,
+         'minor_idx': minor,
+         'password': env.MONERO_WALLET_PASSWORD
+      }, timeout=env.SEND_TIMEOUT)
+      print(f'Monero subaddress lookahead set to {major}:{minor}')
+
 util.wait_for_rpc()
 
-try:
-   import_bitcoin_seed()
-   util.request_electrum_rpc('btc', 'load_wallet')
-   util.request_electrum_rpc('btc', 'changegaplimit', [1000, 'iknowhatimdoing'])
-   print('Bitcoin seed has successfully been imported!')
-except Exception as e:
-   if 'Remove the existing wallet first!' in e.__str__():
-      print('Bitcoin wallet already exists. Skipping...')
-   else:
-      print(util.get_time(), 'Error importing bitcoin seed:')
-      print(traceback.format_exc())
+if 'btc' in env.AUTOFORWARD_COINS:
+  try:
+     import_bitcoin_seed()
+     util.request_electrum_rpc('btc', 'load_wallet')
+     util.request_electrum_rpc('btc', 'changegaplimit', [1000, 'iknowhatimdoing'])
+     print('Bitcoin seed has successfully been imported!')
+  except Exception as e:
+     if 'Remove the existing wallet first!' in e.__str__():
+        print('Bitcoin wallet already exists. Skipping...')
+     else:
+        print(util.get_time(), 'Error importing bitcoin seed:')
+        print(traceback.format_exc())
 
 
-try:
-   import_litecoin_seed()
-   util.request_electrum_rpc('ltc', 'load_wallet')
-   util.request_electrum_rpc('ltc', 'changegaplimit', [1000, 'iknowhatimdoing'])
-   print('Litecoin seed has successfully been imported!')
-except Exception as e:
-   if 'Remove the existing wallet first!' in e.__str__():
-      print('Bitcoin wallet already exists. Skipping...')
-   else:
-      print(util.get_time(), 'Error importing litecoin seed:')
-      print(traceback.format_exc())
+if 'ltc' in env.AUTOFORWARD_COINS:
+  try:
+     import_litecoin_seed()
+     util.request_electrum_rpc('ltc', 'load_wallet')
+     util.request_electrum_rpc('ltc', 'changegaplimit', [1000, 'iknowhatimdoing'])
+     print('Litecoin seed has successfully been imported!')
+  except Exception as e:
+     if 'Remove the existing wallet first!' in e.__str__():
+        print('Litecoin wallet already exists. Skipping...')
+     else:
+        print(util.get_time(), 'Error importing litecoin seed:')
+        print(traceback.format_exc())
 
-try:
-   import_litecoin_mweb_seed()
-   util.request_electrum_rpc('ltc-mweb', 'load_wallet')
-   util.request_electrum_rpc('ltc-mweb', 'changegaplimit', [1000, 'iknowhatimdoing'])
-   print('Litecoin mimblewimble seed has successfully been imported!')
-except Exception as e:
-   if 'Remove the existing wallet first!' in e.__str__():
-      print('Litecoin mimblewimble wallet already exists. Skipping...')
-   else:
-      print(util.get_time(), 'Error importing litecoin mimblewimble seed:')
-      print(traceback.format_exc())
+if 'ltc-mweb' in env.AUTOFORWARD_COINS:
+  try:
+     import_litecoin_mweb_seed()
+     util.request_electrum_rpc('ltc-mweb', 'load_wallet')
+     util.request_electrum_rpc('ltc-mweb', 'changegaplimit', [1000, 'iknowhatimdoing'])
+     print('Litecoin mimblewimble seed has successfully been imported!')
+  except Exception as e:
+     if 'Remove the existing wallet first!' in e.__str__():
+        print('Litecoin mimblewimble wallet already exists. Skipping...')
+     else:
+        print(util.get_time(), 'Error importing litecoin mimblewimble seed:')
+        print(traceback.format_exc())
 
-try:
-   import_monero_seed()
-   print('Monero seed has successfully been imported!')
-except Exception as e:
-   if 'Remove the existing wallet first!' in e.__str__():
-      print('Bitcoin wallet already exists. Skipping...')
-   else:
-      print(util.get_time(), 'Error importing monero seed:')
-      print(traceback.format_exc())
+if 'xmr' in env.AUTOFORWARD_COINS:
+  try:
+     import_monero_seed()
+     print('Monero seed has successfully been imported!')
+  except Exception as e:
+     if 'Remove the existing wallet first!' in e.__str__():
+        print('Monero wallet already exists. Skipping...')
+     else:
+        print(util.get_time(), 'Error importing monero seed:')
+        print(traceback.format_exc())

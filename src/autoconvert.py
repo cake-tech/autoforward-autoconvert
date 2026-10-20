@@ -1,9 +1,9 @@
-import math
 import traceback
 import random
 import time
 import util
 import env
+import status
 
 balances = {}
 asset_name_to_id = {}
@@ -58,12 +58,15 @@ def prepare_and_make_trade(balance, quote_currency, base_currency, payload):
         payload['price'] = limit_price
         util.kraken_request('/0/private/AddOrder', payload)
         print(util.get_time(), f'Selling up to {balance} {quote_currency if payload["type"] == "sell" else base_currency} for pair {payload['pair']} for limit price {limit_price}')
+        return True
     else:
         print(f'{quote_currency} balance {balance} is below the minimum of {order_min}; skipping')
+        return False
 
 
 def attempt_sell(asset: str, settlement_currency: str):
     balance = get_balance(asset)
+    status.set(asset, balance=balance)
 
     if balance == 0:
         print(f'No balance for {asset}; skipping')
@@ -78,12 +81,13 @@ def attempt_sell(asset: str, settlement_currency: str):
         payload['type'] = 'sell'
         payload['pair'] = f'{asset}{settlement_currency}'
         payload['volume'] = balance
-        prepare_and_make_trade(balance, asset, settlement_currency, payload)
+        if prepare_and_make_trade(balance, asset, settlement_currency, payload):
+            status.set(asset, last_sell_at=int(time.time()), last_sell_amount=balance)
     except Exception as e:
         print('prepare_and_make_trade error: ', e)
         # If we are here, then there is an issue getting the pair details and executing the trade
         # Either there is a Kraken error, or this trading pair does not exist
-        print(f'Attempting to sell indirectly via other assets')
+        print('Attempting to sell indirectly via other assets')
 
         for intermediary_currency in ['USD', 'USDT', 'USDC', 'EUR', 'XBT']:
             # NOTE: it's possible for the conversion to be "stuck" in the intermediary currency if there is not enough to convert out of
@@ -98,14 +102,20 @@ def attempt_sell(asset: str, settlement_currency: str):
                 payload['type'] = 'sell'
                 payload['pair'] = f'{asset}{intermediary_currency}'
                 payload['volume'] = balance
-                prepare_and_make_trade(balance, asset, intermediary_currency, payload)
+                if not prepare_and_make_trade(balance, asset, intermediary_currency, payload):
+                    break  # below this route's minimum; a second leg would sell an unrelated balance
                 load_balances()
                 intermediary_balance = get_balance(intermediary_currency)
                 # Start the second trade, buying the quote settlement currency with the base intermediary currency balance
                 payload['type'] = 'buy'
                 payload['pair'] = f'{settlement_currency}{intermediary_currency}'
                 payload['volume'] = intermediary_balance
-                prepare_and_make_trade(balance, settlement_currency, intermediary_currency, payload)
+                # The minimum to check is the intermediary's, not the asset's.
+                prepare_and_make_trade(intermediary_balance, settlement_currency, intermediary_currency, payload)
+                status.set(asset, last_sell_at=int(time.time()), last_sell_amount=balance, last_sell_via=intermediary_currency)
+                # The balance is spent: trying the next intermediary would
+                # only re-submit a sale of funds that are already gone.
+                break
             except:
                 print(f'No path found through {intermediary_currency}')
                 continue
@@ -115,23 +125,43 @@ if __name__ == '__main__':
         print('Testnet mode enabled. Autoconvert will now sleep forever. Zz Zz Zz...')
         time.sleep(999999999)
 
-    load_asset_names_and_ids()
+    print('Autoconverting:', ', '.join(env.AUTOCONVERT_ASSETS), '->', env.SETTLEMENT_CURRENCY)
 
     while 1:
         # First, get the settlement currency formatted correctly
         settlement_currency = env.SETTLEMENT_CURRENCY
-        load_balances()
+
+        # A Kraken outage (an HTML error page instead of JSON) must cost one
+        # pass, not crash the program.
+        try:
+            if not asset_name_to_id:
+                load_asset_names_and_ids()
+            load_balances()
+            status.ok('kraken')
+        except Exception as e:
+            status.error('kraken', e)
+            status.write('autoconvert')
+            print(util.get_time(), 'Error loading Kraken assets or balances:')
+            print(traceback.format_exc())
+            time.sleep(random.randint(30, 90))
+            continue
+
+        status.set('kraken', settlement_balance=get_balance(settlement_currency) if settlement_currency in asset_name_to_id else None)
 
         # Then, initiate the selling process for each supported asset unless it's already the settlement currency
-        for asset in ['XBT', 'LTC', 'XMR']:
+        for asset in env.AUTOCONVERT_ASSETS:
             try:
                 if settlement_currency != asset:
                     attempt_sell(asset, settlement_currency)
+                    status.ok(asset)
                 else:
                     print(f'Not converting {asset} since it is already in the settlement currency')
             except Exception as e:
+                status.error(asset, e)
                 print(util.get_time(), f'Error attempting to sell {asset}:')
                 print(traceback.format_exc())
+
+        status.write('autoconvert')
 
         delay = random.randint(30, 90)
         time.sleep(delay)

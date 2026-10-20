@@ -50,6 +50,8 @@ services:
   monero-wallet-rpc:
     build:
       context: ./docker/monero-wallet-rpc
+      args:
+        VERSION: "${MONERO_WALLET_RPC_VERSION:-v0.18.5.1}"
     restart: unless-stopped
     container_name: monero-wallet-rpc
     volumes:
@@ -68,6 +70,7 @@ services:
     environment:
       - PYTHONUNBUFFERED=1
       - TESTNET=${TESTNET}
+      - AUTOFORWARD_COINS=${AUTOFORWARD_COINS:-btc,ltc,ltc-mweb,xmr}
       - BITCOIN_ELECTRUM_RPC_URL=http://btc-electrum:7000
       - LITECOIN_ELECTRUM_RPC_URL=http://ltc-electrum:7000
       - LITECOIN_MWEB_ELECTRUM_RPC_URL=http://ltc-mweb-electrum:7000
@@ -82,6 +85,8 @@ services:
       - MONERO_WALLET_SEED=${MONERO_WALLET_SEED}
       - MONERO_WALLET_PASSWORD=${MONERO_WALLET_PASSWORD}
       - MONERO_WALLET_HEIGHT=${MONERO_WALLET_HEIGHT}
+      - MONERO_WALLET_FILENAME=${MONERO_WALLET_FILENAME:-mywallet}
+      - MONERO_SUBADDRESS_LOOKAHEAD=${MONERO_SUBADDRESS_LOOKAHEAD:-50:20000}
     command: python ./src/seed-importer.py
     depends_on:
       - btc-electrum
@@ -96,6 +101,7 @@ services:
     environment:
       - PYTHONUNBUFFERED=1
       - TESTNET=${TESTNET}
+      - AUTOFORWARD_COINS=${AUTOFORWARD_COINS:-btc,ltc,ltc-mweb,xmr}
       - BITCOIN_ELECTRUM_RPC_URL=http://btc-electrum:7000
       - LITECOIN_ELECTRUM_RPC_URL=http://ltc-electrum:7000
       - LITECOIN_MWEB_ELECTRUM_RPC_URL=http://ltc-mweb-electrum:7000
@@ -107,6 +113,18 @@ services:
       - MONERO_WALLET_PASSWORD=${MONERO_WALLET_PASSWORD}
       - KRAKEN_API_KEY=${KRAKEN_API_KEY}
       - KRAKEN_API_SECRET=${KRAKEN_API_SECRET}
+      - MONERO_WALLET_FILENAME=${MONERO_WALLET_FILENAME:-mywallet}
+      - MIN_BITCOIN_SEND_AMOUNT=${MIN_BITCOIN_SEND_AMOUNT:-0.0001}
+      - MIN_LITECOIN_SEND_AMOUNT=${MIN_LITECOIN_SEND_AMOUNT:-0.05}
+      - MIN_MONERO_SEND_AMOUNT=${MIN_MONERO_SEND_AMOUNT:-0.03}
+      - MAX_NETWORK_FEE_PERCENT=${MAX_NETWORK_FEE_PERCENT:-5}
+      - BITCOIN_FEE_SOURCE=${BITCOIN_FEE_SOURCE:-https://mempool.space/api/v1/fees/recommended}
+      - BITCOIN_FEE_RATE=${BITCOIN_FEE_RATE:-halfHourFee}
+      - LITECOIN_FEE_SOURCE=${LITECOIN_FEE_SOURCE:-https://litecoinspace.org/api/v1/fees/recommended}
+      - LITECOIN_FEE_RATE=${LITECOIN_FEE_RATE:-halfHourFee}
+      - STATUS_DIR=/status
+    volumes:
+      - ./status:/status
     command: python ./src/autoforward.py
     extra_hosts:
       - "host.docker.internal:host-gateway"
@@ -121,9 +139,15 @@ services:
     environment:
       - PYTHONUNBUFFERED=1
       - TESTNET=${TESTNET}
+      - AUTOFORWARD_COINS=${AUTOFORWARD_COINS:-btc,ltc,ltc-mweb,xmr}
       - KRAKEN_API_KEY=${KRAKEN_API_KEY}
       - KRAKEN_API_SECRET=${KRAKEN_API_SECRET}
       - SETTLEMENT_CURRENCY=${SETTLEMENT_CURRENCY}
+      - MAX_SLIPPAGE_PERCENT=${MAX_SLIPPAGE_PERCENT:-0.5}
+      - AUTOCONVERT_ASSETS=${AUTOCONVERT_ASSETS:-XBT,LTC,XMR}
+      - STATUS_DIR=/status
+    volumes:
+      - ./status:/status
     command: python ./src/autoconvert.py
     depends_on:
       - seed-importer

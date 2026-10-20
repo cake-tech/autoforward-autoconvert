@@ -2,3 +2,4 @@
 .env
 .electrs-cookie
 __pycache__
+status/

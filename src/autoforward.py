@@ -1,5 +1,5 @@
 from typing import List, Literal, cast
-from time import sleep
+from time import sleep, time
 import random
 import traceback
 import requests
@@ -8,6 +8,7 @@ import json
 from constants import MIN_BITCOIN_SEND_AMOUNT_MAINNET, MIN_BITCOIN_SEND_AMOUNT_TESTNET, MIN_LITECOIN_SEND_AMOUNT_MAINNET, MIN_LITECOIN_SEND_AMOUNT_TESTNET, MIN_MONERO_SEND_AMOUNT_MAINNET, MIN_MONERO_SEND_AMOUNT_TESTNET
 import util
 import env
+import status
 
 ElectrumCoin = Literal['btc', 'ltc', 'ltc-mweb']
 
@@ -27,7 +28,7 @@ def get_fee_rate(coin: ElectrumCoin) -> int:
     source = coin_to_source[coin]
     rate = coin_to_rate[coin]
 
-    return requests.get(source).json()[rate]
+    return requests.get(source, timeout=15).json()[rate]
 
 def set_electrum_fee_rate(coin: ElectrumCoin, rate: int = None, dynamic: bool = None):
     if dynamic:  # Fall back to the Electrum rate if there is an issue
@@ -51,7 +52,7 @@ def create_psbt(coin: ElectrumCoin, destination_address: str, fee_rate: int = No
         'unsigned': unsigned # This way we can get the input amounts
     }
 
-    return util.request_electrum_rpc(coin, 'payto', params)
+    return util.request_electrum_rpc(coin, 'payto', params, timeout=env.SEND_TIMEOUT)
 
 def get_psbt_data(coin: ElectrumCoin, psbt: str) -> dict:
     return util.request_electrum_rpc(coin, 'deserialize', [psbt])
@@ -61,7 +62,7 @@ def get_tx_output_amount(coin: ElectrumCoin, tx_id: str, output_index: int) -> i
         serialized_tx = util.request_electrum_rpc(coin, 'gettransaction', [tx_id])
     except Exception as e:
         if 'No such mempool or blockchain transaction' in e.__str__():
-            print(util.get_time(), f'Got "No such mempool or blockchain transaction" error while getting transaction outputs. Looking for the offending transaction in history...')
+            print(util.get_time(), 'Got "No such mempool or blockchain transaction" error while getting transaction outputs. Looking for the offending transaction in history...')
             find_and_remove_offending_transactions(coin)
             serialized_tx = util.request_electrum_rpc(coin, 'gettransaction', [tx_id])
         else:
@@ -91,7 +92,7 @@ def get_total_psbt_fee(coin: ElectrumCoin, tx: dict) -> float:
     return total_fee
 
 def sign_psbt(coin: ElectrumCoin, psbt: str) -> str:
-    return cast(str, util.request_electrum_rpc(coin, 'signtransaction', [psbt]))
+    return cast(str, util.request_electrum_rpc(coin, 'signtransaction', [psbt], timeout=env.SEND_TIMEOUT))
 
 def find_and_remove_offending_transactions(coin: ElectrumCoin):
     history = cast(List[dict], util.request_electrum_rpc(coin, 'onchain_history'))
@@ -102,7 +103,7 @@ def find_and_remove_offending_transactions(coin: ElectrumCoin):
             util.request_electrum_rpc(coin, 'removelocaltx', [tx['txid']])
 
 def broadcast_electrum_tx(coin: ElectrumCoin, signed_tx: str):
-    util.request_electrum_rpc(coin, 'broadcast', [signed_tx])
+    util.request_electrum_rpc(coin, 'broadcast', [signed_tx], timeout=env.SEND_TIMEOUT)
 
 def get_monero_balance() -> float:
     params = {'account_index': 0}
@@ -118,7 +119,42 @@ def sweep_all_monero(address: str) -> None:
         'subaddr_indices_all': True  # Without this, it sends from each subaddress separately
     }
 
-    util.request_monero_rpc('sweep_all', params)
+    util.request_monero_rpc('sweep_all', params, timeout=env.SEND_TIMEOUT)
+
+monero_receipts = {'height': 0, 'max_subaddress': -1, 'last_received_at': 0}
+
+def update_monero_receipts() -> None:
+    # The highest subaddress index that has ever received funds, tracked
+    # incrementally. A monitor compares it with the merchant wallet's (e.g.
+    # BTCPay's view-only wallet): a payment there to an index this wallet
+    # never reaches means it fell outside the subaddress lookahead and is
+    # invisible here.
+    params: dict = {'in': True, 'account_index': 0}
+
+    if monero_receipts['height']:
+        # min_height is exclusive; re-reading the last block is harmless.
+        params.update(filter_by_height=True, min_height=monero_receipts['height'] - 1)
+
+    transfers = util.request_monero_rpc('get_transfers', params, timeout=env.SEND_TIMEOUT).get('in', [])
+
+    for transfer in transfers:
+        monero_receipts['max_subaddress'] = max(monero_receipts['max_subaddress'], transfer['subaddr_index']['minor'])
+        monero_receipts['height'] = max(monero_receipts['height'], transfer['height'])
+        monero_receipts['last_received_at'] = max(monero_receipts['last_received_at'], transfer['timestamp'])
+
+    status.set('xmr',
+               wallet_height=util.request_monero_rpc('get_height')['height'],
+               max_received_subaddress=monero_receipts['max_subaddress'],
+               last_received_at=monero_receipts['last_received_at'])
+
+last_monero_store = time()
+
+def store_monero_wallet(force: bool = False) -> None:
+    global last_monero_store
+
+    if force or time() - last_monero_store >= env.MONERO_STORE_INTERVAL:
+        util.request_monero_rpc('store', timeout=env.SEND_TIMEOUT)
+        last_monero_store = time()
 
 def get_new_kraken_address(asset: Literal['btc', 'ltc', 'xmr']) -> str:
     sym_to_name = {
@@ -163,6 +199,7 @@ def attempt_electrum_autoforward(coin: ElectrumCoin):
     }
 
     min_send = coin_to_min_send_testnet[coin] if env.TESTNET == '1' else coin_to_min_send_mainnet[coin]
+    status.set(coin, balance=balance, min_send=min_send)
 
     if balance < min_send:
         print(util.get_time(), f'Not enough {coin_upper} balance to autoforward. (Balance: {balance}, Min. send: {min_send})')
@@ -187,7 +224,7 @@ def attempt_electrum_autoforward(coin: ElectrumCoin):
             response_json = cast(dict, http_error.response.json())
 
             if response_json.get('error', {}).get('data', {}).get('exception', '') == 'NotEnoughFunds()':
-                print(util.get_time(), f'Not autoforwarding due to high transaction fee.')
+                print(util.get_time(), 'Not autoforwarding due to high transaction fee.')
                 return                 
 
             raise http_error
@@ -211,18 +248,20 @@ def attempt_electrum_autoforward(coin: ElectrumCoin):
 
         # https://github.com/MAGICGrants/autoforward-autoconvert/issues/34
         if ('bad-txns-inputs-missingorspent' in error_msg):
-            print(util.get_time(), f'Got bad-txns-inputs-missingorspent error while broadcasting transaction. Looking for the offending transaction in history...')
+            print(util.get_time(), 'Got bad-txns-inputs-missingorspent error while broadcasting transaction. Looking for the offending transaction in history...')
             find_and_remove_offending_transactions(coin)
             broadcast_electrum_tx(coin, signed_tx)
         else:
             raise e
 
+    status.set(coin, last_forward_at=int(time()), last_forward_amount=balance)
     print(util.get_time(), f'Autoforwarded {balance} {coin_upper} to {address}!')
 
 def attempt_monero_autoforward():
     balance = get_monero_balance()
 
     min_send = MIN_MONERO_SEND_AMOUNT_TESTNET if env.TESTNET == '1' else MIN_MONERO_SEND_AMOUNT_MAINNET
+    status.set('xmr', balance=balance, min_send=min_send)
 
     if balance < min_send:
         print(util.get_time(), f'Not enough XMR balance to autoforward. (Balance: {balance}, Min Send: {min_send})')
@@ -234,36 +273,52 @@ def attempt_monero_autoforward():
         address = get_new_kraken_address('xmr')
 
     sweep_all_monero(address)
+    status.set('xmr', last_forward_at=int(time()), last_forward_amount=balance)
     print(util.get_time(), f'Autoforwarded {balance} XMR to {address}!')
+    store_monero_wallet(force=True)
+
+def attempt_monero() -> None:
+    # Bookkeeping for monitoring only: never let it block the sweep.
+    try:
+        update_monero_receipts()
+        status.ok('xmr-receipts')
+    except Exception as e:
+        status.error('xmr-receipts', e)
+        print(util.get_time(), 'Error reading Monero receipts:')
+        print(traceback.format_exc())
+
+    attempt_monero_autoforward()
+    store_monero_wallet()
+
+attempts = {
+    'btc': ('Bitcoin', lambda: attempt_electrum_autoforward('btc')),
+    'ltc': ('Litecoin', lambda: attempt_electrum_autoforward('ltc')),
+    'ltc-mweb': ('Litecoin MWEB', lambda: attempt_electrum_autoforward('ltc-mweb')),
+    'xmr': ('Monero', attempt_monero),
+}
+
+unknown = [coin for coin in env.AUTOFORWARD_COINS if coin not in attempts]
+if unknown:
+    raise SystemExit(f'Unknown AUTOFORWARD_COINS entries: {unknown}')
+
+print('Autoforwarding:', ', '.join(env.AUTOFORWARD_COINS))
 
 util.wait_for_rpc()
 util.wait_for_wallets()
 
-while 1: 
-    try:
-        attempt_electrum_autoforward('btc')
-    except Exception as e:
-        print(util.get_time(), 'Error autoforwarding Bitcoin:')
-        print(traceback.format_exc())
+while 1:
+    for coin in env.AUTOFORWARD_COINS:
+        name, attempt = attempts[coin]
 
-    try:
-        attempt_electrum_autoforward('ltc')
-    except Exception as e:
-        print(util.get_time(), 'Error autoforwarding litecoin:')
-        print(traceback.format_exc())
-    
-    try:
-        attempt_electrum_autoforward('ltc-mweb')
-    except Exception as e:
-        print(util.get_time(), 'Error autoforwarding Litecoin MWEB:')
-        print(traceback.format_exc())
+        try:
+            attempt()
+            status.ok(coin)
+        except Exception as e:
+            status.error(coin, e)
+            print(util.get_time(), f'Error autoforwarding {name}:')
+            print(traceback.format_exc())
 
-    try:
-        attempt_monero_autoforward()
-    except Exception as e:
-        print(util.get_time(), 'Error autoforwarding Monero:')
-        print(traceback.format_exc())
+    status.write('autoforward')
 
     delay = random.randint(270, 330)
     sleep(delay)
-

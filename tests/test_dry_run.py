@@ -12,7 +12,9 @@ reach the point where money would move, so the dry-run assertion cannot pass
 merely because the path gave up early.
 """
 import base64
+import contextlib
 import importlib
+import io
 import json
 import os
 import sys
@@ -46,12 +48,16 @@ class Backends:
         # One mature output by default; tests of selection pass their own.
         self.utxos = utxos if utxos is not None else [utxo('aa', 0, '1.5', tip - 100)]
         self.tip = tip
+        self.kraken_balances = {}
 
     def post(self, url, headers=None, data=None, json=None, auth=None, timeout=None):
         if url.startswith('https://api.kraken.com'):
             path = url[len('https://api.kraken.com'):]
             self.sent.append(('kraken', path.split('?')[0], dict(data or {})))
-            return FakeResponse({'error': [], 'result': self.kraken(path, data or {})})
+            try:
+                return FakeResponse({'error': [], 'result': self.kraken(path, data or {})})
+            except KrakenError as e:
+                return FakeResponse({'error': [str(e)]})
 
         body = json if json is not None else __import__('json').loads(data)
         if 'json_rpc' in url:
@@ -91,16 +97,52 @@ class Backends:
             'store': {},
         }[method]
 
+    # Kraken's spot markets as the sale paths see them: ZEC has no USDT
+    # market, so it goes through USD.
+    PAIRS = {
+        'XXMRUSDT': {'altname': 'XMRUSDT', 'base': 'XXMR', 'quote': 'USDT', 'mid': 100.0},
+        'XZECZUSD': {'altname': 'ZECUSD', 'base': 'XZEC', 'quote': 'ZUSD', 'mid': 50.0},
+        'USDTZUSD': {'altname': 'USDTUSD', 'base': 'USDT', 'quote': 'ZUSD', 'mid': 1.0},
+    }
+
     def kraken(self, path, data):
         if path.startswith('/0/private/DepositAddresses'):
-            return [{'address': 'kraken-address', 'new': bool(data.get('new'))}]
+            address = 't1krakenaddress' if data.get('asset') == 'zec' else 'kraken-address'
+            return [{'address': address, 'new': bool(data.get('new'))}]
         if path.startswith('/0/public/AssetPairs'):
-            return {'XMRUSDT': {'ordermin': '0.01', 'pair_decimals': 2}}
+            wanted = data.get('pair')
+            if wanted and not any(wanted in (pair_id, p['altname']) for pair_id, p in self.PAIRS.items()):
+                raise KrakenError('EQuery:Unknown asset pair')
+            return {pair_id: {'altname': p['altname'], 'base': p['base'], 'quote': p['quote'], 'status': 'online',
+                              'ordermin': '0.01', 'costmin': '0.5', 'pair_decimals': 4, 'lot_decimals': 8}
+                    for pair_id, p in self.PAIRS.items() if not wanted or wanted in (pair_id, p['altname'])}
         if path.startswith('/0/public/Depth'):
-            return {'XMRUSDT': {'bids': [['100', '1', 0]], 'asks': [['101', '1', 0]]}}
+            mid = self.PAIRS[data['pair']]['mid']
+            return {data['pair']: {'bids': [[str(mid * 0.999), '1', 0]], 'asks': [[str(mid * 1.001), '1', 0]]}}
+        if path.startswith('/0/private/Balance'):
+            return dict(self.kraken_balances)
         if path.startswith('/0/private/AddOrder'):
-            return {'descr': {'order': 'sell'}}
+            if not data.get('validate'):
+                self.fill(data)
+            return {'descr': {'order': data['type']}}
         raise AssertionError(f'unexpected Kraken call {path}')
+
+    def fill(self, order):
+        """Fill a live IOC order whose limit crosses the book, as Kraken would."""
+        pair = next(p for p in self.PAIRS.values() if p['altname'] == order['pair'])
+        mid, volume, price = pair['mid'], float(order['volume']), float(order['price'])
+        base, quote = pair['base'], pair['quote']
+        if order['type'] == 'sell' and price <= mid * 0.999:
+            self.credit(base, -volume)
+            self.credit(quote, volume * mid * 0.999)
+        elif order['type'] == 'buy' and price >= mid * 1.001:
+            cost = volume * mid * 1.001 * 1.004  # taker fee charged in the quote
+            assert cost <= float(self.kraken_balances.get(quote, 0)), f'insufficient {quote} for {order}'
+            self.credit(quote, -cost)
+            self.credit(base, volume)
+
+    def credit(self, asset_id, amount):
+        self.kraken_balances[asset_id] = str(float(self.kraken_balances.get(asset_id, 0)) + amount)
 
     def fund_moving(self):
         moved = []
@@ -143,7 +185,7 @@ def load(module, dry_run, kraken_key, **extra_env):
 
 
 def forward(coin):
-    def run(module):
+    def run(module, _backends):
         if coin == 'xmr':
             module.attempt_monero()
         else:
@@ -151,10 +193,17 @@ def forward(coin):
     return run
 
 
-def sell(module):
-    module.asset_name_to_id = {'XMR': 'XXMR', 'USDT': 'USDT'}
-    module.balances = {'XXMR': '2.0'}
-    module.attempt_sell('XMR', 'USDT')
+ASSET_IDS = {'XMR': 'XXMR', 'ZEC': 'XZEC', 'USD': 'ZUSD', 'USDT': 'USDT'}
+
+
+def sell(asset, amount='2.0'):
+    def run(module, backends):
+        module.asset_name_to_id = dict(ASSET_IDS)
+        backends.kraken_balances[ASSET_IDS[asset]] = amount
+        module.load_balances()
+        module.load_pairs()
+        module.attempt_sell(asset, 'USDT')
+    return run
 
 
 SCENARIOS = [
@@ -165,7 +214,8 @@ SCENARIOS = [
     ('ltc to Kraken', 'autoforward', True, forward('ltc')),
     ('xmr to own address', 'autoforward', False, forward('xmr')),
     ('xmr to Kraken', 'autoforward', True, forward('xmr')),
-    ('sell xmr on Kraken', 'autoconvert', True, sell),
+    ('sell xmr on Kraken', 'autoconvert', True, sell('XMR')),
+    ('sell zec on Kraken via USD', 'autoconvert', True, sell('ZEC')),
 ]
 
 
@@ -174,7 +224,7 @@ class DryRunNeverMovesFunds(unittest.TestCase):
         backends = Backends()
         with mock.patch('requests.post', backends.post), mock.patch('requests.get', backends.get):
             module = load(module_name, dry_run, kraken_key)
-            action(module)
+            action(module, backends)
         return backends
 
     def test_scenarios(self):
@@ -271,6 +321,10 @@ class BackendFailures(unittest.TestCase):
         self.assertLessEqual(calls[0][1], 15)
 
 
+class KrakenError(Exception):
+    pass
+
+
 class WalletNotLoaded(Exception):
     pass
 
@@ -279,13 +333,42 @@ def json_method(kwargs):
     return (kwargs.get('json') or {}).get('method')
 
 
+class IndirectSale(unittest.TestCase):
+    """ZEC has no USDT market on Kraken, so it is sold for USD, then USD for USDT."""
+
+    def sell_zec(self, dry_run, usd_already_held='0'):
+        backends = Backends()
+        backends.kraken_balances['ZUSD'] = usd_already_held
+        output = io.StringIO()
+        with mock.patch('requests.post', backends.post), mock.patch('requests.get', backends.get), \
+                contextlib.redirect_stdout(output):
+            sell('ZEC')(load('autoconvert', dry_run=dry_run, kraken_key=True), backends)
+        return backends, output.getvalue()
+
+    def test_second_leg_converts_this_sales_proceeds_and_nothing_else(self):
+        # The first leg's USD must reach USDT (a buy limited below the book
+        # never fills as IOC), and USD the account already held is not ours.
+        backends, _ = self.sell_zec(dry_run=False, usd_already_held='1000')
+        balances = {k: float(v) for k, v in backends.kraken_balances.items()}
+        self.assertAlmostEqual(balances['XZEC'], 0)
+        self.assertGreater(balances.get('USDT', 0), 98)  # 2 ZEC at ~50 USD, less fees
+        self.assertAlmostEqual(balances['ZUSD'], 1000, delta=1)
+
+    def test_a_missing_market_is_not_logged_as_an_error(self):
+        # Zabbix pages on any error/failed line in the autoconvert log
+        # (af.convert.errors), so routing around ZECUSDT must stay quiet.
+        _, output = self.sell_zec(dry_run=True)
+        self.assertIn('USDTUSD', output)
+        self.assertNotRegex(output.lower(), r'error|exception|traceback|failed')
+
+
 class PegoutLive(unittest.TestCase):
     """PEGOUT_LIVE makes only the own-wallet peg-out real."""
 
     def run_dry(self, action, **extra_env):
         backends = Backends()
         with mock.patch('requests.post', backends.post), mock.patch('requests.get', backends.get):
-            action(load('autoforward', dry_run=True, kraken_key=True, **extra_env))
+            action(load('autoforward', dry_run=True, kraken_key=True, **extra_env), backends)
         return backends
 
     def test_peg_out_is_broadcast(self):

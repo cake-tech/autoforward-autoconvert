@@ -55,7 +55,7 @@ services:
     build:
       context: ./docker/monero-wallet-rpc
       args:
-        VERSION: "${MONERO_WALLET_RPC_VERSION:-v0.18.5.1}"
+        VERSION: "${MONERO_WALLET_RPC_VERSION:-v0.18.5.4}"
     restart: unless-stopped
     container_name: monero-wallet-rpc
     volumes:

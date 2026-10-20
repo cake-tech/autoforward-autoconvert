@@ -43,7 +43,7 @@ Create a `.env` file as a copy of `.env.example` and set the values for the empt
 | `MIN_MONERO_SEND_AMOUNT` | **No** | `0.03` | Minimum unlocked XMR balance before sweeping. |
 | `MONERO_WALLET_FILENAME` | **No** | `mywallet` | Wallet file name inside the monero-wallet-rpc volume. |
 | `MONERO_SUBADDRESS_LOOKAHEAD` | **No** | `50:20000` (compose) | `major:minor` subaddress lookahead, applied once right after the seed is restored. Must exceed the longest run of unused subaddresses the merchant can create (one per unpaid invoice), or later payments are never seen. To change it on an existing wallet, call `set_subaddress_lookahead` and then `rescan_blockchain`. |
-| `MONERO_WALLET_RPC_VERSION` | **No** | `v0.18.5.1` | Tag of `ghcr.io/sethforprivacy/simple-monero-wallet-rpc` to build from. |
+| `MONERO_WALLET_RPC_VERSION` | **No** | `v0.18.5.4` | Tag of `ghcr.io/sethforprivacy/simple-monero-wallet-rpc` to build from. |
 | `ELECTRUM_GAP_LIMIT` | **No** | `1000` | Electrum gap limit, applied at import **and every startup**. A merchant issuing one address per invoice needs it above its longest run of unpaid invoices, or later payments are never seen. |
 | `ELECTRUM_MAX_INPUTS` | **No** | `400` | Maximum inputs per forward (largest outputs first); the rest go in later passes, so a backlog never builds a non-standard (>100 kvB) transaction. |
 | `LITECOIN_MIN_CONFIRMATIONS` | **No** | `6` | LTC outputs are forwarded only with this many confirmations. MWEB receipts are **pegged out to an LTC change address** (never sent to the exchange directly, since Kraken fails MWEB peg-out deposits), and peg-outs are unspendable for 6 blocks (`PEGOUT_MATURITY`). `ltc-mweb` therefore requires `ltc`. |

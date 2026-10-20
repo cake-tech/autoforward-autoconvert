@@ -35,6 +35,23 @@ Create a `.env` file as a copy of `.env.example` and set the values for the empt
 | `BITCOIN_FEE_RATE` | **No** | `halfHourFee` | The fee rate to use in the Bitcoin fee source API response. |
 | `LITECOIN_FEE_SOURCE` | **No** | `https://litecoinspace.org/api/v1/fees/recommended` | The fee API source to use for Litecoin transactions. |
 | `LITECOIN_FEE_RATE` | **No** | `halfHourFee` | The fee rate to use in the Litecoin fee source API response. |
+| `DRY_RUN` | **No** | `1` | **Defaults to on.** Everything a live pass does except moving funds: transactions are built and signed but not broadcast (Monero: `do_not_relay`), Kraken orders are sent with `validate=true`, and no new Kraken deposit address is created. Without a Kraken key, a dry run forwards to the wallet's own address. Set to `0` to forward and sell. Every status file reports `dry_run`. |
+| `PEGOUT_LIVE` | **No** | `0` | In a dry run, still broadcast MWEB peg-outs. They only move coins between the operator's own wallets (MWEB to an LTC change address), so a test bed can exercise the real peg-out and the LTC pass after it while forwards stay dry. |
+| `AUTOFORWARD_COINS` | **No** | `btc,ltc,ltc-mweb,xmr` | Comma-separated wallets to autoforward. A coin left out is not waited for at startup, not imported by the seed importer and never swept. |
+| `AUTOCONVERT_ASSETS` | **No** | `XBT,LTC,XMR` | Comma-separated Kraken asset altnames that autoconvert sells (e.g. add `ZEC`). |
+| `MIN_BITCOIN_SEND_AMOUNT` | **No** | `0.0001` | Minimum confirmed BTC balance before forwarding (batching threshold). |
+| `MIN_LITECOIN_SEND_AMOUNT` | **No** | `0.05` | Minimum confirmed LTC balance before forwarding; applies to LTC and LTC-MWEB. |
+| `MIN_MONERO_SEND_AMOUNT` | **No** | `0.03` | Minimum unlocked XMR balance before sweeping. |
+| `MONERO_WALLET_FILENAME` | **No** | `mywallet` | Wallet file name inside the monero-wallet-rpc volume. |
+| `MONERO_SUBADDRESS_LOOKAHEAD` | **No** | `50:20000` (compose) | `major:minor` subaddress lookahead, applied once right after the seed is restored. Must exceed the longest run of unused subaddresses the merchant can create (one per unpaid invoice), or later payments are never seen. To change it on an existing wallet, call `set_subaddress_lookahead` and then `rescan_blockchain`. |
+| `MONERO_WALLET_RPC_VERSION` | **No** | `v0.18.5.4` | Tag of `ghcr.io/sethforprivacy/simple-monero-wallet-rpc` to build from. |
+| `ELECTRUM_GAP_LIMIT` | **No** | `1000` | Electrum gap limit, applied at import **and every startup**. A merchant issuing one address per invoice needs it above its longest run of unpaid invoices, or later payments are never seen. |
+| `ELECTRUM_MAX_INPUTS` | **No** | `400` | Maximum inputs per forward (largest outputs first); the rest go in later passes, so a backlog never builds a non-standard (>100 kvB) transaction. |
+| `LITECOIN_MIN_CONFIRMATIONS` | **No** | `6` | LTC outputs are forwarded only with this many confirmations. MWEB receipts are **pegged out to an LTC change address** (never sent to the exchange directly, since Kraken fails MWEB peg-out deposits), and peg-outs are unspendable for 6 blocks (`PEGOUT_MATURITY`). `ltc-mweb` therefore requires `ltc`. |
+| `ELECTRUM_ADDRESS_REPORT_INTERVAL` | **No** | `3600` | Seconds between reporting each wallet's tracked receiving-address count in the status file. |
+| `HTTP_TIMEOUT` | **No** | `60` | Seconds before any RPC/HTTP request is abandoned. |
+| `SEND_TIMEOUT` | **No** | `600` | Timeout for building, signing and broadcasting a sweep. |
+| `MONERO_STORE_INTERVAL` | **No** | `3600` | Seconds between `store` calls, so a restart does not re-sync from the last close. The wallet is also stored after every sweep. |
 
 
 ## Running
@@ -44,6 +61,10 @@ After setting the required environment variable values, you can run the containe
 ```bash
 $ docker-compose --env-file .env up -d
 ```
+
+## Monitoring
+
+`autoforward` and `autoconvert` each rewrite `status/<program>.json` after every pass (bind-mounted at `/status`). `updated` is the heartbeat; each section (a coin, a Kraken asset, `kraken`, `xmr-receipts`) carries `last_ok`, `last_error_at`, `last_error` and `errors_total`, plus balances and the last forward or sale. The `xmr` section also reports `max_received_subaddress`: compare it with the merchant wallet's highest paid subaddress to catch payments that fell outside the lookahead.
 
 ## Changing seeds
 

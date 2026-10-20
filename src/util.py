@@ -1,5 +1,4 @@
-import ast
-from typing import Literal, cast
+from typing import Literal
 from requests.auth import HTTPDigestAuth
 from datetime import datetime
 import urllib.parse
@@ -15,7 +14,7 @@ from constants import MONERO_WALLET_FILENAME
 def get_time() -> str:
     return f'[{datetime.now().strftime("%Y-%m-%d %H:%M:%S")}]'
 
-def request_electrum_rpc(coin: Literal['btc', 'ltc', 'ltc-mweb'], method: str, params: list | dict = []):
+def request_electrum_rpc(coin: Literal['btc', 'ltc', 'ltc-mweb'], method: str, params: list | dict = [], timeout: float | None = None, _reloaded: bool = False):
     headers = {'content-type': 'application/json'}
 
     coin_to_auth = {
@@ -41,19 +40,29 @@ def request_electrum_rpc(coin: Literal['btc', 'ltc', 'ltc-mweb'], method: str, p
          coin_to_url[coin], 
         headers=headers,
         data=json.dumps(data),
-        auth=coin_to_auth[coin]
+        auth=coin_to_auth[coin],
+        timeout=timeout or env.HTTP_TIMEOUT
     )
 
     response_json = response.json()
 
     if 'error' in response_json:
+        # A restarted Electrum daemon comes back without its wallet, and
+        # nothing else would load it until this program restarts. Load it and
+        # retry, once.
+        message = str((response_json.get('error') or {}).get('message', ''))
+        if 'wallet not loaded' in message and method != 'load_wallet' and not _reloaded:
+            print(get_time(), f'{ELECTRUM_COIN_NAMES[coin]} wallet not loaded (Electrum restarted?); loading it.')
+            request_electrum_rpc(coin, 'load_wallet', timeout=env.SEND_TIMEOUT, _reloaded=True)
+            ensure_gap_limit(coin)
+            return request_electrum_rpc(coin, method, params, timeout, _reloaded=True)
         raise Exception(response_json)
 
     response.raise_for_status()
 
     return response_json['result']
 
-def request_monero_rpc(method: str, params: dict = {}):
+def request_monero_rpc(method: str, params: dict = {}, timeout: float | None = None):
     headers = {'content-type': 'application/json'}
 
     data = {
@@ -67,7 +76,8 @@ def request_monero_rpc(method: str, params: dict = {}):
         env.MONERO_RPC_URL,
         headers=headers,
         json=data,
-        auth=HTTPDigestAuth(env.MONERO_RPC_USERNAME, env.MONERO_RPC_PASSWORD)
+        auth=HTTPDigestAuth(env.MONERO_RPC_USERNAME, env.MONERO_RPC_PASSWORD),
+        timeout=timeout or env.HTTP_TIMEOUT
     )
 
     response_json = response.json()
@@ -92,34 +102,27 @@ def open_monero_wallet() -> None:
     params = {'filename': MONERO_WALLET_FILENAME, 'password': env.MONERO_WALLET_PASSWORD}
     request_monero_rpc('open_wallet', params)
 
+ELECTRUM_COIN_NAMES = {'btc': 'Bitcoin', 'ltc': 'Litecoin', 'ltc-mweb': 'Litecoin MWEB'}
+
+
+def enabled_electrum_coins() -> list:
+    return [coin for coin in ELECTRUM_COIN_NAMES if coin in env.AUTOFORWARD_COINS]
+
+
 def wait_for_rpc():
-    print('Waiting for Bitcoin Electrum RPC...')
+    for coin in enabled_electrum_coins():
+        print(f'Waiting for {ELECTRUM_COIN_NAMES[coin]} Electrum RPC...')
 
-    while 1:
-        try:
-            request_electrum_rpc('btc', 'getinfo')
-            break
-        except:
-            time.sleep(10)
-    
-    print('Waiting for Litecoin Electrum RPC...')
+        while 1:
+            try:
+                request_electrum_rpc(coin, 'getinfo')
+                break
+            except:
+                time.sleep(10)
 
-    while 1:
-        try:
-            request_electrum_rpc('ltc', 'getinfo')
-            break
-        except:
-            
-            time.sleep(10)
+    if 'xmr' not in env.AUTOFORWARD_COINS:
+        return
 
-    while 1:
-        try:
-            request_electrum_rpc('ltc-mweb', 'getinfo')
-            break
-        except:
-            
-            time.sleep(10)
-    
     print('Waiting for Monero RPC...')
 
     while 1:
@@ -131,44 +134,39 @@ def wait_for_rpc():
                 break
             time.sleep(10)
 
+def ensure_gap_limit(coin: Literal['btc', 'ltc', 'ltc-mweb']) -> None:
+    try:
+        request_electrum_rpc(coin, 'changegaplimit', [env.ELECTRUM_GAP_LIMIT, True], timeout=env.SEND_TIMEOUT)
+        print(f'{ELECTRUM_COIN_NAMES[coin]} gap limit: {env.ELECTRUM_GAP_LIMIT}')
+    except Exception as e:
+        print(f'Could not set the {ELECTRUM_COIN_NAMES[coin]} gap limit to {env.ELECTRUM_GAP_LIMIT}:', e)
+
 def wait_for_wallets():
-    print('Waiting for Bitcoin wallet...')
+    for coin in enabled_electrum_coins():
+        print(f'Waiting for {ELECTRUM_COIN_NAMES[coin]} wallet...')
 
-    while 1:
-        try:
-            open_bitcoin_wallet()
-            break
-        except:
-            time.sleep(10)
-        
-    print('Waiting for Litecoin wallet...')
+        while 1:
+            try:
+                request_electrum_rpc(coin, 'load_wallet')
+                break
+            except:
+                time.sleep(10)
 
-    while 1:
-        try:
-            open_litecoin_wallet()
-            break
-        except:
-            time.sleep(10)
-    
-    print('Waiting for Litecoin MWEB wallet...')
+        ensure_gap_limit(coin)
 
-    while 1:
-        try:
-            open_litecoin_mweb_wallet()
-            break
-        except:
-            time.sleep(10)
+    if 'xmr' not in env.AUTOFORWARD_COINS:
+        return
 
     print('Waiting for Monero wallet...')
 
-    while 1:                  
+    while 1:
         try:
             request_monero_rpc('get_balance', {'account_index': 0})
             break
         except Exception as e:
             print('Failed to check Monero balance:', e)
             print('Attempting to open Monero wallet...')
-        
+
         try:
             open_monero_wallet()
             break
@@ -194,7 +192,8 @@ def kraken_request(path: str, payload = {}) -> dict:
     response = requests.post(
         'https://api.kraken.com' + path,
         headers=headers,
-        data=payload
+        data=payload,
+        timeout=env.HTTP_TIMEOUT
     )
 
     response_json = response.json()

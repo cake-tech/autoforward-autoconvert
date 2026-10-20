@@ -24,7 +24,11 @@ services:
     container_name: ltc-electrum
     restart: unless-stopped
     volumes:
-      - litecoin-data:/home/electrum-ltc/.electrum
+      # Electrum-LTC's data dir: the image's user is `electrum`, and it writes
+      # .electrum-ltc. (Upstream mounted /home/electrum-ltc/.electrum, a path
+      # nothing uses, so the wallets lived in the container and a recreate
+      # lost them.)
+      - litecoin-data:/home/electrum/.electrum-ltc
     environment:
       - TESTNET=${TESTNET}
       - ELECTRUM_RPC_USER=user
@@ -40,7 +44,7 @@ services:
     container_name: ltc-mweb-electrum
     restart: unless-stopped
     volumes:
-      - litecoin-mweb-data:/home/electrum-ltc/.electrum
+      - litecoin-mweb-data:/home/electrum/.electrum-ltc
     environment:
       - TESTNET=${TESTNET}
       - ELECTRUM_RPC_USER=user
@@ -50,6 +54,8 @@ services:
   monero-wallet-rpc:
     build:
       context: ./docker/monero-wallet-rpc
+      args:
+        VERSION: "${MONERO_WALLET_RPC_VERSION:-v0.18.5.4}"
     restart: unless-stopped
     container_name: monero-wallet-rpc
     volumes:
@@ -68,6 +74,10 @@ services:
     environment:
       - PYTHONUNBUFFERED=1
       - TESTNET=${TESTNET}
+      - AUTOFORWARD_COINS=${AUTOFORWARD_COINS:-btc,ltc,ltc-mweb,xmr}
+      - DRY_RUN=${DRY_RUN:-1}
+      - PEGOUT_LIVE=${PEGOUT_LIVE:-0}
+      - ELECTRUM_GAP_LIMIT=${ELECTRUM_GAP_LIMIT:-1000}
       - BITCOIN_ELECTRUM_RPC_URL=http://btc-electrum:7000
       - LITECOIN_ELECTRUM_RPC_URL=http://ltc-electrum:7000
       - LITECOIN_MWEB_ELECTRUM_RPC_URL=http://ltc-mweb-electrum:7000
@@ -82,6 +92,8 @@ services:
       - MONERO_WALLET_SEED=${MONERO_WALLET_SEED}
       - MONERO_WALLET_PASSWORD=${MONERO_WALLET_PASSWORD}
       - MONERO_WALLET_HEIGHT=${MONERO_WALLET_HEIGHT}
+      - MONERO_WALLET_FILENAME=${MONERO_WALLET_FILENAME:-mywallet}
+      - MONERO_SUBADDRESS_LOOKAHEAD=${MONERO_SUBADDRESS_LOOKAHEAD:-50:20000}
     command: python ./src/seed-importer.py
     depends_on:
       - btc-electrum
@@ -96,6 +108,10 @@ services:
     environment:
       - PYTHONUNBUFFERED=1
       - TESTNET=${TESTNET}
+      - AUTOFORWARD_COINS=${AUTOFORWARD_COINS:-btc,ltc,ltc-mweb,xmr}
+      - DRY_RUN=${DRY_RUN:-1}
+      - PEGOUT_LIVE=${PEGOUT_LIVE:-0}
+      - ELECTRUM_GAP_LIMIT=${ELECTRUM_GAP_LIMIT:-1000}
       - BITCOIN_ELECTRUM_RPC_URL=http://btc-electrum:7000
       - LITECOIN_ELECTRUM_RPC_URL=http://ltc-electrum:7000
       - LITECOIN_MWEB_ELECTRUM_RPC_URL=http://ltc-mweb-electrum:7000
@@ -107,6 +123,18 @@ services:
       - MONERO_WALLET_PASSWORD=${MONERO_WALLET_PASSWORD}
       - KRAKEN_API_KEY=${KRAKEN_API_KEY}
       - KRAKEN_API_SECRET=${KRAKEN_API_SECRET}
+      - MONERO_WALLET_FILENAME=${MONERO_WALLET_FILENAME:-mywallet}
+      - MIN_BITCOIN_SEND_AMOUNT=${MIN_BITCOIN_SEND_AMOUNT:-0.0001}
+      - MIN_LITECOIN_SEND_AMOUNT=${MIN_LITECOIN_SEND_AMOUNT:-0.05}
+      - MIN_MONERO_SEND_AMOUNT=${MIN_MONERO_SEND_AMOUNT:-0.03}
+      - MAX_NETWORK_FEE_PERCENT=${MAX_NETWORK_FEE_PERCENT:-5}
+      - BITCOIN_FEE_SOURCE=${BITCOIN_FEE_SOURCE:-https://mempool.space/api/v1/fees/recommended}
+      - BITCOIN_FEE_RATE=${BITCOIN_FEE_RATE:-halfHourFee}
+      - LITECOIN_FEE_SOURCE=${LITECOIN_FEE_SOURCE:-https://litecoinspace.org/api/v1/fees/recommended}
+      - LITECOIN_FEE_RATE=${LITECOIN_FEE_RATE:-halfHourFee}
+      - STATUS_DIR=/status
+    volumes:
+      - ./status:/status
     command: python ./src/autoforward.py
     extra_hosts:
       - "host.docker.internal:host-gateway"
@@ -121,9 +149,18 @@ services:
     environment:
       - PYTHONUNBUFFERED=1
       - TESTNET=${TESTNET}
+      - AUTOFORWARD_COINS=${AUTOFORWARD_COINS:-btc,ltc,ltc-mweb,xmr}
+      - DRY_RUN=${DRY_RUN:-1}
+      - PEGOUT_LIVE=${PEGOUT_LIVE:-0}
+      - ELECTRUM_GAP_LIMIT=${ELECTRUM_GAP_LIMIT:-1000}
       - KRAKEN_API_KEY=${KRAKEN_API_KEY}
       - KRAKEN_API_SECRET=${KRAKEN_API_SECRET}
       - SETTLEMENT_CURRENCY=${SETTLEMENT_CURRENCY}
+      - MAX_SLIPPAGE_PERCENT=${MAX_SLIPPAGE_PERCENT:-0.5}
+      - AUTOCONVERT_ASSETS=${AUTOCONVERT_ASSETS:-XBT,LTC,XMR}
+      - STATUS_DIR=/status
+    volumes:
+      - ./status:/status
     command: python ./src/autoconvert.py
     depends_on:
       - seed-importer

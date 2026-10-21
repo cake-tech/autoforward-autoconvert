@@ -9,6 +9,9 @@ import status
 balances = {}
 asset_name_to_id = {}
 pairs = {}
+# Set by every live order: `balances` was loaded before it, so the next asset
+# in the pass must reload rather than spend what the order already spent.
+balances_stale = False
 
 # Tried in order when an asset has no market with the settlement currency.
 # Value can sit in the intermediary if its second leg is below the minimum.
@@ -125,6 +128,8 @@ def convert(amount: float, from_asset: str, to_asset: str) -> float | None:
         util.kraken_request('/0/private/AddOrder', payload)
         print(util.get_time(), f'DRY RUN: Kraken validated {action}; not placed.')
     else:
+        global balances_stale
+        balances_stale = True
         util.kraken_request('/0/private/AddOrder', payload)
         print(util.get_time(), action[0].upper() + action[1:])
     return receives
@@ -142,6 +147,12 @@ def wait_for_increase(asset: str, before: float) -> float:
 
 
 def attempt_sell(asset: str, settlement_currency: str):
+    global balances_stale
+    if balances_stale:
+        # An earlier asset's order this pass moved funds: USD a two-leg sale
+        # produced and spent must not be swept again (2026-10-20 20:42).
+        load_balances()
+        balances_stale = False
     balance = get_balance(asset)
     status.set(asset, balance=balance)
 

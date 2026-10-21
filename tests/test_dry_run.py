@@ -163,7 +163,8 @@ class Backends:
             self.credit(quote, volume * mid * 0.999)
         elif order['type'] == 'buy' and price >= mid * 1.001:
             cost = volume * mid * 1.001 * 1.004  # taker fee charged in the quote
-            assert cost <= float(self.kraken_balances.get(quote, 0)), f'insufficient {quote} for {order}'
+            if cost > float(self.kraken_balances.get(quote, 0)):
+                raise KrakenError('EOrder:Insufficient funds')
             self.credit(quote, -cost)
             self.credit(base, volume)
 
@@ -390,6 +391,22 @@ class IndirectSale(unittest.TestCase):
         self.assertAlmostEqual(balances['XZEC'], 0)
         self.assertGreater(balances.get('USDT', 0), 98)  # 2 ZEC at ~50 USD, less fees
         self.assertAlmostEqual(balances['ZUSD'], 1000, delta=1)
+
+    def test_a_later_asset_in_the_same_pass_sees_the_balances_after_the_sale(self):
+        # ZEC's second leg spends the USD it produced; the USD residue sweep
+        # later in the same pass must not try to spend that USD again
+        # (prod, 2026-10-20 20:42: "EOrder:Insufficient funds").
+        backends = Backends()
+        backends.kraken_balances['XZEC'] = '2.0'
+        with mock.patch('requests.post', backends.post), mock.patch('requests.get', backends.get):
+            module = load('autoconvert', dry_run=False, kraken_key=True)
+            module.asset_name_to_id = dict(ASSET_IDS)
+            module.load_balances()
+            module.load_pairs()
+            for asset in ('ZEC', 'USD'):
+                module.attempt_sell(asset, 'USDT')
+        self.assertGreater(float(backends.kraken_balances['USDT']), 98)
+        self.assertLess(float(backends.kraken_balances['ZUSD']), 5)  # only the fee-margin residue
 
     def test_a_missing_market_is_not_logged_as_an_error(self):
         # Zabbix pages on any error/failed line in the autoconvert log

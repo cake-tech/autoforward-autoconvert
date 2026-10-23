@@ -239,23 +239,32 @@ def get_new_kraken_address(asset: Literal['btc', 'ltc', 'xmr', 'zec']) -> str:
         'method': sym_to_name[asset]
     }
 
+    # Kraken returns its newest unused address until a deposit lands on it,
+    # so one left unused by a failed pass keeps coming back until it expires.
+    def valid(addr) -> bool:
+        expires = int(addr.get('expiretm') or 0)  # 0: never
+        return not expires or expires - time() >= env.KRAKEN_ADDRESS_MIN_VALIDITY
+
     result = util.kraken_request('/0/private/DepositAddresses', payload)
 
-    first_new_address = next((addr for addr in result if addr.get('new', False)), None)
+    first_new_address = next((addr for addr in result if addr.get('new', False) and valid(addr)), None)
     if first_new_address:
         return first_new_address['address']
     elif env.DRY_RUN and result:
         # Creating addresses is a write on the Kraken account; a dry run
         # reuses an existing one.
-        return result[0]['address']
+        existing = next((addr for addr in result if valid(addr)), None)
+        if existing:
+            return existing['address']
     else:
         payload['new'] = True
         result = util.kraken_request('/0/private/DepositAddresses', payload)
-        first_new_address = next((addr for addr in result if addr.get('new', False)), None)
+        first_new_address = next((addr for addr in result if addr.get('new', False) and valid(addr)), None)
         if first_new_address:
             return first_new_address['address']
 
-    raise Exception(f'Kraken did not return a new address: {json.dumps(result, indent=2)}')
+    raise Exception(f'Kraken returned no {asset} address that is new and expires more than '
+                    f'{env.KRAKEN_ADDRESS_MIN_VALIDITY}s from now: {json.dumps(result, indent=2)}')
 
 def attempt_electrum_autoforward(coin: ElectrumCoin):
     coin_upper = coin.upper()

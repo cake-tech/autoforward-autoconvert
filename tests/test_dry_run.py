@@ -18,6 +18,7 @@ import io
 import json
 import os
 import sys
+import time
 import unittest
 from unittest import mock
 
@@ -44,8 +45,10 @@ class FakeResponse:
 class Backends:
     """Canned answers for exactly the calls the forward/sale paths make."""
 
-    def __init__(self, utxos=None, tip=1000, zcash_ready=True, zcash_empty_pools=()):
+    def __init__(self, utxos=None, tip=1000, zcash_ready=True, zcash_empty_pools=(), kraken_address_expires_in=None):
         self.sent = []
+        # Seconds until Kraken's deposit addresses expire (`expiretm`); None: never.
+        self.kraken_address_expires_in = kraken_address_expires_in
         self.zcash_ready = zcash_ready
         self.zcash_empty_pools = zcash_empty_pools
         # One mature output by default; tests of selection pass their own.
@@ -134,7 +137,9 @@ class Backends:
     def kraken(self, path, data):
         if path.startswith('/0/private/DepositAddresses'):
             address = 't1krakenaddress' if data.get('asset') == 'zec' else 'kraken-address'
-            return [{'address': address, 'new': bool(data.get('new'))}]
+            expires = self.kraken_address_expires_in
+            expiretm = '0' if expires is None else str(int(time.time()) + expires)
+            return [{'address': address, 'expiretm': expiretm, 'new': bool(data.get('new'))}]
         if path.startswith('/0/public/AssetPairs'):
             wanted = data.get('pair')
             if wanted and not any(wanted in (pair_id, p['altname']) for pair_id, p in self.PAIRS.items()):
@@ -311,6 +316,25 @@ class ForwardSelection(unittest.TestCase):
         self.assertFalse([1 for b, method, p in backends.sent if method.startswith('/0/private/DepositAddresses')])
         self.assertIn({'change': True, 'unused': True},
                       [p for b, method, p in backends.sent if method == 'listaddresses'])
+
+
+class KrakenAddressExpiry(unittest.TestCase):
+    def test_never_forwards_to_an_address_about_to_expire(self):
+        # Kraken hands back its newest unused address until a deposit lands
+        # on it, so an address left unused by a failed pass keeps coming back
+        # until it expires; a deposit to an expired address may be lost.
+        backends = Backends(kraken_address_expires_in=3600)
+        with mock.patch('requests.post', backends.post), mock.patch('requests.get', backends.get):
+            module = load('autoforward', dry_run=False, kraken_key=True)
+            with self.assertRaisesRegex(Exception, 'expires'):
+                module.attempt_electrum_autoforward('btc')
+        self.assertEqual(backends.fund_moving(), ['kraken new deposit address'])
+
+    def test_forwards_to_an_address_valid_past_the_margin(self):
+        backends = Backends(kraken_address_expires_in=7 * 86400)
+        with mock.patch('requests.post', backends.post), mock.patch('requests.get', backends.get):
+            load('autoforward', dry_run=False, kraken_key=True).attempt_electrum_autoforward('btc')
+        self.assertIn('electrum broadcast', backends.fund_moving())
 
 
 class BackendFailures(unittest.TestCase):

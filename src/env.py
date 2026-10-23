@@ -93,6 +93,9 @@ ZCASH_HEALTH_URL = os.getenv('ZCASH_HEALTH_URL', '')
 
 KRAKEN_API_KEY = os.getenv('KRAKEN_API_KEY', '')
 KRAKEN_API_SECRET = os.getenv('KRAKEN_API_SECRET', '')
+# Seconds a Kraken deposit address must stay valid (`expiretm`) to be sent
+# to: a deposit landing after expiry may be lost or cost a recovery fee.
+KRAKEN_ADDRESS_MIN_VALIDITY = int(os.getenv('KRAKEN_ADDRESS_MIN_VALIDITY', '86400'))
 
 MAX_NETWORK_FEE_PERCENT = float(os.getenv('MAX_NETWORK_FEE_PERCENT', '5'))
 MAX_SLIPPAGE_PERCENT = float(os.getenv('MAX_SLIPPAGE_PERCENT', '0.5'))

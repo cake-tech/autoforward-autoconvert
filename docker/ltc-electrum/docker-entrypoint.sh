@@ -22,6 +22,23 @@ elif [ "$TESTNET" != "1" ]; then
     exit 1
 fi
 
+# MWEB syncs over Litecoin P2P (Electrum-LTC's embedded mwebd), from whatever
+# peers it finds; Electrum's proxy is the one setting it obeys. pin-proxy.py
+# sends all of its P2P connections to MWEB_PEERS and lets Electrum reach only
+# its server. Restarted if it dies: without it Electrum and mwebd reach nothing.
+if [ -n "$MWEB_PEERS" ]; then
+    python3 ./pin-proxy.py --check
+    (while :; do python3 ./pin-proxy.py; echo "pin-proxy.py exited ($?), restarting" >&2; sleep 1; done) &
+    for _ in 1 2 3 4 5 6 7 8 9 10; do
+        python3 -c "import socket; socket.create_connection(('127.0.0.1', 1080), 1)" 2>/dev/null && break
+        sleep 1
+    done
+    ADDITIONAL_DAEMON_FLAGS="$ADDITIONAL_DAEMON_FLAGS -p socks5:127.0.0.1:1080"
+elif [ "$TESTNET" != "1" ]; then
+    echo "MWEB_PEERS is empty: set it to Litecoin nodes you own or trust (ip:port,...)." >&2
+    exit 1
+fi
+
 ./squashfs-root/AppRun $ADDITIONAL_SETCONFIG_FLAGS --offline setconfig rpcuser $ELECTRUM_RPC_USER
 ./squashfs-root/AppRun $ADDITIONAL_SETCONFIG_FLAGS --offline setconfig rpcpassword $ELECTRUM_RPC_PASSWORD
 ./squashfs-root/AppRun $ADDITIONAL_SETCONFIG_FLAGS --offline setconfig rpchost 0.0.0.0

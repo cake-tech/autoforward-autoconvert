@@ -18,7 +18,7 @@ WORKDIR $ELECTRUM_HOME
 RUN wget https://github.com/ltc-electrum/electrum-ltc/releases/download/${ELECTRUM_VERSION}/electrum-ltc-${ELECTRUM_VERSION}-x86_64.AppImage -O electrum-ltc.appimage
 RUN [ "${ELECTRUM_CHECKSUM_SHA512}  electrum-ltc.appimage" = "$(sha512sum electrum-ltc.appimage)" ]
 RUN echo -e "**************************\n SHA 512 Checksum OK\n**************************"
-COPY --chown=$ELECTRUM_USER:$ELECTRUM_USER ./docker-entrypoint.sh docker-entrypoint.sh
+COPY --chown=$ELECTRUM_USER:$ELECTRUM_USER ./docker-entrypoint.sh ./pin-proxy.py ./
 RUN chmod +x ./electrum-ltc.appimage ./docker-entrypoint.sh
 RUN ./electrum-ltc.appimage --appimage-extract
 RUN rm ./electrum-ltc.appimage

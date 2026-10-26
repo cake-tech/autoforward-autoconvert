@@ -15,6 +15,11 @@ fi
 
 if [ -n "$ELECTRUM_SERVER_ADDRESS" ]; then
     ADDITIONAL_DAEMON_FLAGS="$ADDITIONAL_DAEMON_FLAGS -1 -s $ELECTRUM_SERVER_ADDRESS"
+elif [ "$TESTNET" != "1" ]; then
+    # Without a server Electrum picks random public ones, and a malicious
+    # server can lie about history and broadcasts. Never on mainnet.
+    echo "ELECTRUM_SERVER_ADDRESS is empty: set it to a server you own or trust." >&2
+    exit 1
 fi
 
 echo $ADDITIONAL_SETCONFIG_FLAGS

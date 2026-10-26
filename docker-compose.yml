@@ -3,8 +3,8 @@ services:
     build:
       context: ./docker/btc-electrum
       args:
-        VERSION: "4.6.2"
-        CHECKSUM_SHA512: "890c1fae4cd2da5f1fea3f07c1c6b537f9557177b86e23c40333ec83743ed46182ec74e43a27416a3eaa9704d87d0a1702d0a789b23467bcc68a17d638b43655"
+        VERSION: "4.8.3"
+        CHECKSUM_SHA512: "f84c083ce23be6852226804d9f79cc30213fe14388110b8c3758162c7724314511ad1f1ac724cda5abd7b16afece454f595c0001ae503d5f7a33c5db26f1e491"
     container_name: btc-electrum
     restart: unless-stopped
     volumes:
@@ -19,8 +19,8 @@ services:
     build:
       context: ./docker/ltc-electrum
       args:
-        VERSION: "4.6.2-3"
-        CHECKSUM_SHA512: "d271154250a47bab94cb17d2eb229b6483da1016970f7a74fcf0c713a7ad3dfafe53fa6429ce0d76964f71b52151b5da43ef0c38dc7577f53a47738859b693da"
+        VERSION: "4.8.3"
+        CHECKSUM_SHA512: "5eb8aae36107f967649a19a278d5bc846d5d069e186bc86343991f9506e1c3343719426d3acf0f267b0858d63aaacfa072653f011e5417a04fef1b3dbc2e9b26"
     container_name: ltc-electrum
     restart: unless-stopped
     volumes:
@@ -39,8 +39,8 @@ services:
     build:
       context: ./docker/ltc-electrum
       args:
-        VERSION: "4.6.2-3"
-        CHECKSUM_SHA512: "d271154250a47bab94cb17d2eb229b6483da1016970f7a74fcf0c713a7ad3dfafe53fa6429ce0d76964f71b52151b5da43ef0c38dc7577f53a47738859b693da"
+        VERSION: "4.8.3"
+        CHECKSUM_SHA512: "5eb8aae36107f967649a19a278d5bc846d5d069e186bc86343991f9506e1c3343719426d3acf0f267b0858d63aaacfa072653f011e5417a04fef1b3dbc2e9b26"
     container_name: ltc-mweb-electrum
     restart: unless-stopped
     volumes:

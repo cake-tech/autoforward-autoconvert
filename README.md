@@ -26,8 +26,8 @@ Create a `.env` file as a copy of `.env.example` and set the values for the empt
 | `KRAKEN_API_KEY` | Yes | - | Your API key from Kraken. |
 | `KRAKEN_API_SECRET` | Yes | - | Your API secret from Kraken. |
 | `MONERO_DAEMON_ADDRESS` | Yes | - | The address of a Monero daemon you own or trust. |
-| `BITCOIN_ELECTRUM_SERVER_ADDRESS` | **No** | - | The address of a Bitcoin Electrum server you own or trust. E.g.: `localhost:50001:t` (no SSL) or `my.electrum.server:50001:s` (SSL). By leaving this blank you're letting Electrum select a random server for you, which may be a privacy concern. |
-| `LITECOIN_ELECTRUM_SERVER_ADDRESS` | **No** | - | The address of a Litecoin Electrum server you own or trust. E.g.: `localhost:50001:t` (no SSL) or `my.electrum.server:50001:s` (SSL). By leaving this blank you're letting Electrum select a random server for you, which may be a privacy concern. |
+| `BITCOIN_ELECTRUM_SERVER_ADDRESS` | On mainnet | - | The address of a Bitcoin Electrum server you own or trust. E.g.: `localhost:50001:t` (no SSL) or `my.electrum.server:50001:s` (SSL). Electrum connects to this server only (`--oneserver`). On mainnet the Electrum container refuses to start without it: a random public server can lie about history and broadcasts. |
+| `LITECOIN_ELECTRUM_SERVER_ADDRESS` | On mainnet | - | The address of a Litecoin Electrum server you own or trust. E.g.: `localhost:50001:t` (no SSL) or `my.electrum.server:50001:s` (SSL). Electrum connects to this server only (`--oneserver`). On mainnet the Electrum container refuses to start without it: a random public server can lie about history and broadcasts. |
 | `MAX_NETWORK_FEE_PERCENT` | **No** | `5` | The maximum accepted miner fee percent when auto-forwarding. Not applied to XMR. |
 | `MAX_SLIPPAGE_PERCENT` | **No** | `0.5` | The maximum accepted slippage percent when auto-converting. |
 | `SETTLEMENT_CURRENCY` | **No** | `USD` | The currency you wish to convert to. If there isn't a direct trading pair, it attempts to trade through USD first, e.g. XMR->USD->DAI. |

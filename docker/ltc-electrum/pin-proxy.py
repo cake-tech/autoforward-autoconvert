@@ -16,6 +16,10 @@ both are pointed here, and this proxy decides where every connection goes:
     each new one got the last one evicted (hundreds a minute, on btcpay-stg).
     The rest are held, unanswered, until one closes; mwebd's dials have no
     timeout, so they simply wait, where a refusal would have it retry in a loop.
+    While a node is down its connection goes to another, and the nodes do not
+    evict us (whitelist=noban), so nothing would ever move it back: once a
+    minute, a node left with none that answers again gets the newest
+    connection of the busiest one, by closing it for mwebd to redial.
   - a connection to the pinned Electrum server (ELECTRUM_SERVER_ADDRESS)
     passes through as is.
   - anything else is refused.
@@ -35,6 +39,7 @@ LISTEN_HOST = '127.0.0.1'
 LISTEN_PORT = 1080
 P2P_PORTS = {'mainnet': 9333, 'testnet': 19335}
 CONNECT_TIMEOUT = 10
+REBALANCE_INTERVAL = 60
 
 # SOCKS5 reply codes (RFC 1928).
 SUCCEEDED = 0
@@ -79,10 +84,40 @@ class PinProxy:
         self.electrum_server = electrum_server
         self.p2p_slots = asyncio.Semaphore(len(peers))
         self.p2p_open = {peer: 0 for peer in peers}
+        # Established P2P connections per node, oldest first: (client, upstream) writers.
+        self.p2p_conns = {peer: [] for peer in peers}
 
     def p2p_order(self):
         """Our nodes, the least used first: one each while all are up."""
         return sorted(self.peers, key=lambda peer: self.p2p_open[peer])
+
+    async def rebalance(self, interval=REBALANCE_INTERVAL):
+        while True:
+            await asyncio.sleep(interval)
+            await self.rebalance_once()
+
+    async def rebalance_once(self):
+        """Hand a node that answers again a connection from the busiest one."""
+        busiest = max(self.peers, key=lambda peer: len(self.p2p_conns[peer]))
+        if len(self.p2p_conns[busiest]) < 2:
+            return
+        for idle in self.peers:
+            # p2p_open, not p2p_conns: a dial still in progress counts.
+            if self.p2p_open[idle] or not await self.reachable(idle):
+                continue
+            log(f'{idle[0]}:{idle[1]} answers again; moving a connection from {busiest[0]}:{busiest[1]}')
+            for writer in self.p2p_conns[busiest][-1]:
+                writer.close()
+            return
+
+    @staticmethod
+    async def reachable(target):
+        try:
+            _, writer = await asyncio.wait_for(asyncio.open_connection(*target), CONNECT_TIMEOUT)
+        except (OSError, asyncio.TimeoutError):
+            return False
+        writer.close()
+        return True
 
     async def handle(self, reader, writer):
         try:
@@ -149,6 +184,9 @@ class PinProxy:
 
         if target != (host, port):
             log(f'{host}:{port} -> {target[0]}:{target[1]}')
+        writers = (writer, upstream_writer)
+        if target in self.p2p_conns:
+            self.p2p_conns[target].append(writers)
         try:
             await self._reply(writer, SUCCEEDED)
             await asyncio.gather(
@@ -158,6 +196,7 @@ class PinProxy:
             upstream_writer.close()
             if target in self.p2p_open:
                 self.p2p_open[target] -= 1
+                self.p2p_conns[target].remove(writers)
 
     @staticmethod
     async def _reply(writer, code):
@@ -195,8 +234,9 @@ async def serve(proxy, host=LISTEN_HOST, port=LISTEN_PORT):
         + ', '.join(f'{h}:{p}' for h, p in proxy.peers)
         + (f'; Electrum server {proxy.electrum_server[0]}:{proxy.electrum_server[1]}'
            if proxy.electrum_server else ''))
+    rebalancer = asyncio.create_task(proxy.rebalance())
     async with server:
-        await server.serve_forever()
+        await asyncio.gather(server.serve_forever(), rebalancer)
 
 
 def main():

@@ -20,14 +20,17 @@ pin_proxy.log = lambda message: None
 P2P_PORT = 9333
 
 
-async def start_named_server(name):
+async def start_named_server(name, port=0):
     """Sends its name, then holds the connection until the client closes it."""
     async def handle(reader, writer):
         writer.write(name.encode())
         await writer.drain()
-        await reader.read()
+        try:
+            await reader.read()
+        except ConnectionResetError:  # the rebalance probe closes without reading the name
+            pass
         writer.close()
-    server = await asyncio.start_server(handle, '127.0.0.1', 0)
+    server = await asyncio.start_server(handle, '127.0.0.1', port)
     return server, server.sockets[0].getsockname()[1]
 
 
@@ -49,17 +52,21 @@ class PinProxyTest(unittest.IsolatedAsyncioTestCase):
             server.close()
             await server.wait_closed()
 
-    async def named(self, name):
-        server, port = await start_named_server(name)
+    async def named(self, name, port=0):
+        server, port = await start_named_server(name, port)
         self.servers.append(server)
         return port
 
     async def start_proxy(self, peers):
+        return (await self.start_proxy_object(peers))[0]
+
+    async def start_proxy_object(self, peers):
+        """(port, PinProxy), for a test that drives the proxy itself."""
         proxy = pin_proxy.PinProxy(
             [('127.0.0.1', p) for p in peers], P2P_PORT, ('localhost', self.electrum))
         server = await asyncio.start_server(proxy.handle, '127.0.0.1', 0)
         self.servers.append(server)
-        return server.sockets[0].getsockname()[1]
+        return server.sockets[0].getsockname()[1], proxy
 
     async def open(self, proxy_port, request):
         """SOCKS5 CONNECT, left open; returns (reader, writer)."""
@@ -132,6 +139,42 @@ class PinProxyTest(unittest.IsolatedAsyncioTestCase):
         proxy = await self.start_proxy([unused_port(), self.peer_b])
         code, body = await self.connect(proxy, self.ipv4('203.0.113.9', P2P_PORT))
         self.assertEqual((code, body), (pin_proxy.SUCCEEDED, b'peer-b'))
+
+    async def test_a_peer_that_comes_back_gets_a_connection_back(self):
+        # peer-a is down at first, so both connections land on peer-b.
+        port_a = unused_port()
+        proxy, pinned = await self.start_proxy_object([port_a, self.peer_b])
+        request = self.ipv4('203.0.113.9', P2P_PORT)
+        first = await self.open(proxy, request)
+        second = await self.open(proxy, request)
+        self.assertEqual((await self.answer(first[0]))[1], b'peer-b')
+        self.assertEqual((await self.answer(second[0]))[1], b'peer-b')
+
+        # While it is still down, nothing moves.
+        await pinned.rebalance_once()
+        self.assertEqual(len(pinned.p2p_conns[('127.0.0.1', self.peer_b)]), 2)
+
+        # Once it answers, the newer of the two is closed...
+        await self.named('peer-a', port_a)
+        await pinned.rebalance_once()
+        self.assertEqual(await asyncio.wait_for(second[0].read(), 2), b'')
+        # ...and the redial lands on peer-a, the older one untouched.
+        code, body = await self.connect(proxy, request)
+        self.assertEqual((code, body), (pin_proxy.SUCCEEDED, b'peer-a'))
+        self.assertEqual(len(pinned.p2p_conns[('127.0.0.1', self.peer_b)]), 1)
+        for _, writer in (first, second):
+            writer.close()
+
+    async def test_rebalance_leaves_one_per_peer_alone(self):
+        proxy, pinned = await self.start_proxy_object([self.peer_a, self.peer_b])
+        request = self.ipv4('203.0.113.9', P2P_PORT)
+        connections = [await self.open(proxy, request) for _ in range(2)]
+        for reader, _ in connections:
+            await self.answer(reader)
+        await pinned.rebalance_once()
+        self.assertEqual(sorted(len(c) for c in pinned.p2p_conns.values()), [1, 1])
+        for _, writer in connections:
+            writer.close()
 
     async def test_all_peers_down_is_refused(self):
         proxy = await self.start_proxy([unused_port()])

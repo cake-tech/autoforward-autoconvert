@@ -11,6 +11,11 @@ both are pointed here, and this proxy decides where every connection goes:
     MWEB_PEERS instead, whatever peer mwebd asked for. Every peer it believes
     it has is then one of our nodes. Refusing the others instead would leave
     a fresh wallet, whose address book holds no node of ours, never syncing.
+    At most one at a time per node: mwebd wants 8 peers, and 8 connections
+    from one address make it the netgroup a full litecoind evicts from, so
+    each new one got the last one evicted (hundreds a minute, on btcpay-stg).
+    The rest are held, unanswered, until one closes; mwebd's dials have no
+    timeout, so they simply wait, where a refusal would have it retry in a loop.
   - a connection to the pinned Electrum server (ELECTRUM_SERVER_ADDRESS)
     passes through as is.
   - anything else is refused.
@@ -21,7 +26,6 @@ library only: it runs on the image's system python3.
 import argparse
 import asyncio
 import ipaddress
-import itertools
 import os
 import socket
 import struct
@@ -73,18 +77,12 @@ class PinProxy:
         self.peers = peers
         self.p2p_port = p2p_port
         self.electrum_server = electrum_server
-        # Rotates the first peer tried, so mwebd's connections spread across
-        # the nodes rather than all landing on the first.
-        self._next_peer = itertools.count()
+        self.p2p_slots = asyncio.Semaphore(len(peers))
+        self.p2p_open = {peer: 0 for peer in peers}
 
-    def targets(self, host, port):
-        """Where a request for host:port may go, in the order to try."""
-        if (host, port) == self.electrum_server:
-            return [(host, port)]
-        if port == self.p2p_port:
-            start = next(self._next_peer) % len(self.peers)
-            return self.peers[start:] + self.peers[:start]
-        return []
+    def p2p_order(self):
+        """Our nodes, the least used first: one each while all are up."""
+        return sorted(self.peers, key=lambda peer: self.p2p_open[peer])
 
     async def handle(self, reader, writer):
         try:
@@ -123,32 +121,43 @@ class PinProxy:
             await self._reply(writer, COMMAND_NOT_SUPPORTED)
             return
 
-        targets = self.targets(host, port)
-        if not targets:
+        if (host, port) == self.electrum_server:
+            await self._connect(reader, writer, host, port, [(host, port)])
+        elif port == self.p2p_port:
+            async with self.p2p_slots:
+                await self._connect(reader, writer, host, port, self.p2p_order())
+        else:
             log(f'refused {host}:{port}')
             await self._reply(writer, NOT_ALLOWED)
-            return
 
-        for target_host, target_port in targets:
+    async def _connect(self, reader, writer, host, port, targets):
+        for target in targets:
+            # Counted from the attempt, so the next one picks another node.
+            if target in self.p2p_open:
+                self.p2p_open[target] += 1
             try:
                 upstream_reader, upstream_writer = await asyncio.wait_for(
-                    asyncio.open_connection(target_host, target_port), CONNECT_TIMEOUT)
+                    asyncio.open_connection(*target), CONNECT_TIMEOUT)
                 break
             except (OSError, asyncio.TimeoutError) as e:
-                log(f'{target_host}:{target_port} unreachable: {e!r}')
+                if target in self.p2p_open:
+                    self.p2p_open[target] -= 1
+                log(f'{target[0]}:{target[1]} unreachable: {e!r}')
         else:
             await self._reply(writer, CONNECTION_REFUSED)
             return
 
-        if (target_host, target_port) != (host, port):
-            log(f'{host}:{port} -> {target_host}:{target_port}')
-        await self._reply(writer, SUCCEEDED)
+        if target != (host, port):
+            log(f'{host}:{port} -> {target[0]}:{target[1]}')
         try:
+            await self._reply(writer, SUCCEEDED)
             await asyncio.gather(
                 self._pipe(reader, upstream_writer),
                 self._pipe(upstream_reader, writer))
         finally:
             upstream_writer.close()
+            if target in self.p2p_open:
+                self.p2p_open[target] -= 1
 
     @staticmethod
     async def _reply(writer, code):

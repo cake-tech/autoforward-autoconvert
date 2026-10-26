@@ -21,9 +21,11 @@ P2P_PORT = 9333
 
 
 async def start_named_server(name):
+    """Sends its name, then holds the connection until the client closes it."""
     async def handle(reader, writer):
         writer.write(name.encode())
         await writer.drain()
+        await reader.read()
         writer.close()
     server = await asyncio.start_server(handle, '127.0.0.1', 0)
     return server, server.sockets[0].getsockname()[1]
@@ -59,15 +61,27 @@ class PinProxyTest(unittest.IsolatedAsyncioTestCase):
         self.servers.append(server)
         return server.sockets[0].getsockname()[1]
 
-    async def connect(self, proxy_port, request):
-        """SOCKS5 CONNECT; returns (reply code, what the far end sent)."""
+    async def open(self, proxy_port, request):
+        """SOCKS5 CONNECT, left open; returns (reader, writer)."""
         reader, writer = await asyncio.open_connection('127.0.0.1', proxy_port)
-        try:
-            writer.write(b'\x05\x01\x00')
-            self.assertEqual(await reader.readexactly(2), b'\x05\x00')
-            writer.write(request)
-            reply = await reader.readexactly(10)
+        writer.write(b'\x05\x01\x00')
+        self.assertEqual(await reader.readexactly(2), b'\x05\x00')
+        writer.write(request)
+        return reader, writer
+
+    @staticmethod
+    async def answer(reader):
+        """(reply code, the far end's name) once the proxy answers."""
+        reply = await reader.readexactly(10)
+        if reply[1] != pin_proxy.SUCCEEDED:
             return reply[1], await reader.read()
+        return reply[1], await reader.read(64)
+
+    async def connect(self, proxy_port, request):
+        """SOCKS5 CONNECT, then close; returns (reply code, the far end's name)."""
+        reader, writer = await self.open(proxy_port, request)
+        try:
+            return await self.answer(reader)
         finally:
             writer.close()
 
@@ -92,11 +106,27 @@ class PinProxyTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(code, pin_proxy.SUCCEEDED)
             self.assertIn(body, (b'peer-a', b'peer-b'))
 
-    async def test_p2p_connections_rotate_across_peers(self):
+    async def test_one_p2p_connection_per_peer_and_the_rest_wait(self):
         proxy = await self.start_proxy([self.peer_a, self.peer_b])
-        bodies = [(await self.connect(proxy, self.ipv4('203.0.113.9', P2P_PORT)))[1]
-                  for _ in range(4)]
-        self.assertEqual(bodies, [b'peer-a', b'peer-b', b'peer-a', b'peer-b'])
+        request = self.ipv4('203.0.113.9', P2P_PORT)
+        first = await self.open(proxy, request)
+        second = await self.open(proxy, request)
+        first_name = (await self.answer(first[0]))[1]
+        second_name = (await self.answer(second[0]))[1]
+        self.assertEqual({first_name, second_name}, {b'peer-a', b'peer-b'})
+
+        # A third is held, unanswered, while both peers are in use...
+        third = await self.open(proxy, request)
+        reply = asyncio.ensure_future(third[0].readexactly(10))
+        done, _ = await asyncio.wait({reply}, timeout=0.2)
+        self.assertFalse(done)
+        # ...and goes to the peer that is freed.
+        first[1].close()
+        await first[1].wait_closed()
+        self.assertEqual((await asyncio.wait_for(reply, 2))[1], pin_proxy.SUCCEEDED)
+        self.assertEqual(await third[0].read(64), first_name)
+        for _, writer in (second, third):
+            writer.close()
 
     async def test_a_down_peer_falls_back_to_the_next(self):
         proxy = await self.start_proxy([unused_port(), self.peer_b])
